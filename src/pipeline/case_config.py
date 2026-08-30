@@ -30,8 +30,12 @@ class CaseConfig:
         altitude: Flight altitude (m)
         gamma: Ratio of specific heats
         mesh_tier: Mesh refinement tier
-        su2_iterations: SU2 max iterations
+        su2_iterations: SU2 max iterations (used when strategy is 'direct')
         su2_cfl: SU2 CFL number
+        su2_strategy: Convergence strategy ('direct', 'euler-rans', 'mach-ramp')
+        su2_euler_iterations: Iterations for the Euler stage (euler-rans strategy)
+        su2_rans_iterations: Iterations for the RANS restart stage (euler-rans strategy)
+        su2_mach_ramp_start: Starting Mach for mach-ramp strategy
     """
     name: str
     label: str
@@ -42,6 +46,10 @@ class CaseConfig:
     mesh_tier: str = "standard"
     su2_iterations: int = 5000
     su2_cfl: float = 1.0
+    su2_strategy: str = "direct"
+    su2_euler_iterations: int = 3000
+    su2_rans_iterations: int = 10000
+    su2_mach_ramp_start: float = 5.0
 
     @property
     def output_dir(self) -> str:

@@ -18,6 +18,8 @@ PRESETS = {
     "apollo-cm": apollo_cm,
 }
 
+CONVERGENCE_STRATEGIES = ["direct", "euler-rans", "mach-ramp"]
+
 
 def main() -> int:
     """Run hypersonic blunt body reference pipeline."""
@@ -58,13 +60,37 @@ def main() -> int:
         "--iterations",
         type=int,
         default=10000,
-        help="SU2 max iterations (default: 10000)",
+        help="SU2 max iterations for direct strategy (default: 10000)",
     )
     parser.add_argument(
         "--cfl",
         type=float,
         default=0.1,
         help="SU2 CFL number (default: 0.1)",
+    )
+    parser.add_argument(
+        "--strategy",
+        choices=CONVERGENCE_STRATEGIES,
+        default="euler-rans",
+        help="Convergence strategy: direct, euler-rans, mach-ramp (default: euler-rans)",
+    )
+    parser.add_argument(
+        "--euler-iterations",
+        type=int,
+        default=3000,
+        help="Iterations for Euler stage in euler-rans strategy (default: 3000)",
+    )
+    parser.add_argument(
+        "--rans-iterations",
+        type=int,
+        default=10000,
+        help="Iterations for RANS stage in euler-rans strategy (default: 10000)",
+    )
+    parser.add_argument(
+        "--mach-ramp-start",
+        type=float,
+        default=5.0,
+        help="Starting Mach for mach-ramp strategy (default: 5.0)",
     )
     args = parser.parse_args()
 
@@ -77,6 +103,10 @@ def main() -> int:
         mesh_tier=args.tier,
         su2_iterations=args.iterations,
         su2_cfl=args.cfl,
+        su2_strategy=args.strategy,
+        su2_euler_iterations=args.euler_iterations,
+        su2_rans_iterations=args.rans_iterations,
+        su2_mach_ramp_start=args.mach_ramp_start,
     )
 
     if args.step:

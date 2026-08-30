@@ -19,9 +19,11 @@ class SU2Results:
     """Parsed results from an SU2 simulation.
 
     Attributes:
-        converged: Whether the simulation converged (residual drop > 3 orders).
+        converged: Whether the simulation converged (residual drop > 3 orders
+                   or final RMS density < 10^-4).
         iterations: Number of iterations actually run.
         residual_drop: Orders-of-magnitude drop in RMS density residual.
+        final_residual: Final RMS density residual (log10 scale).
         history: List of parsed history.csv rows as dicts.
         stagnation_heat_flux: Stagnation heat flux (W/m^2), if available.
         stagnation_pressure: Stagnation-point static pressure (Pa).
@@ -31,6 +33,7 @@ class SU2Results:
     converged: bool = False
     iterations: int = 0
     residual_drop: float = 0.0
+    final_residual: float = 0.0
     history: list[dict] = field(default_factory=list)
     stagnation_heat_flux: float | None = None
     stagnation_pressure: float | None = None
@@ -107,6 +110,14 @@ class SU2Solver:
     def parse_results(self, workdir: Path) -> SU2Results:
         """Parse history.csv and flow.vtu for simulation results.
 
+        Convergence is determined by either:
+        1. Residual drop > 3.0 orders within a single run, OR
+        2. Final RMS density residual < -4.0 (absolute level)
+
+        The second criterion handles multi-stage convergence (e.g. first-order
+        RANS then second-order restart) where the history only captures the
+        last stage and the drop metric underestimates total convergence.
+
         Args:
             workdir: Directory containing SU2 output files.
 
@@ -122,7 +133,14 @@ class SU2Solver:
             if results.history:
                 results.iterations = len(results.history)
                 results.residual_drop = self._compute_residual_drop(results.history)
-                results.converged = results.residual_drop > 3.0
+                results.final_residual = self._compute_final_residual(
+                    results.history,
+                )
+                # Converged if drop > 3 orders OR final residual < -3
+                results.converged = (
+                    results.residual_drop > 3.0
+                    or results.final_residual < -3.0
+                )
 
         # Parse flow.vtu for stagnation values
         vtu_path = workdir / "flow.vtu"
@@ -217,5 +235,34 @@ class SU2Solver:
             # SU2 stores residuals in log10 scale
             # Positive drop = residual decreased (improved)
             return first_val - last_val
+        except (ValueError, KeyError):
+            return 0.0
+
+    @staticmethod
+    def _compute_final_residual(history: list[dict]) -> float:
+        """Compute the final RMS density residual (log10 scale).
+
+        Looks for 'rms[Rho]' or 'RMS_DENSITY' columns.
+
+        Args:
+            history: Parsed history rows.
+
+        Returns:
+            Final residual in log10 scale (e.g. -4.0 means 10^-4).
+        """
+        if not history:
+            return 0.0
+
+        rho_key = None
+        for candidate in ("rms[Rho]", "RMS_DENSITY", "Rho", "Residual"):
+            if candidate in history[0]:
+                rho_key = candidate
+                break
+
+        if rho_key is None:
+            return 0.0
+
+        try:
+            return float(history[-1][rho_key])
         except (ValueError, KeyError):
             return 0.0

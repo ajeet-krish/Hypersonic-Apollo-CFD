@@ -28,6 +28,10 @@ class SU2HypersonicConfig:
         sym_marker: Boundary marker name for the symmetry axis
         cfl_number: CFL number for time stepping
         cfl_adapt: Enable CFL adaptation
+        cfl_adapt_min: Minimum CFL for CFL adaptation
+        cfl_adapt_max: Maximum CFL for CFL adaptation
+        cfl_adapt_decrease: CFL decrease factor for adaptation
+        cfl_adapt_increase: CFL increase factor for adaptation
         iterations: Maximum number of solver iterations
         conv_residual_minval: Convergence residual minimum (log10)
         conv_num_method: Convective numerical method
@@ -37,6 +41,8 @@ class SU2HypersonicConfig:
         gas_constant: Specific gas constant (J/(kg*K))
         ref_area: Reference area for force coefficients (m^2)
         ref_length: Reference length for force coefficients (m)
+        freestream_turbulence_intensity: Turbulence intensity for SA initialization
+        freestream_turbulence_viscosity_ratio: Turbulence viscosity ratio for SA
         output_files: Tuple of output file formats
         history_output: Tuple of history output fields
     """
@@ -66,11 +72,19 @@ class SU2HypersonicConfig:
     # Numerics
     cfl_number: float = 0.1
     cfl_adapt: bool = True
+    cfl_adapt_min: float = 0.1
+    cfl_adapt_max: float = 2.0
+    cfl_adapt_decrease: float = 0.5
+    cfl_adapt_increase: float = 100.0
     iterations: int = 10000
     conv_residual_minval: float = -6.0
     conv_num_method: str = "AUSM"
     muscl: bool = True
     limiter: str = "VENKATAKRISHNAN"
+    linear_solver: str = "FGMRES"
+    linear_solver_prec: str = "ILU"
+    linear_solver_error: float = 1e-6
+    linear_solver_iter: int = 10
 
     # Gas properties
     gamma: float = 1.4
@@ -79,6 +93,10 @@ class SU2HypersonicConfig:
     # Reference values
     ref_area: float = 1.0  # m^2
     ref_length: float = 1.0  # m
+
+    # Turbulence initialization (critical for SA convergence in hypersonic flows)
+    freestream_turbulence_intensity: float = 0.05
+    freestream_turbulence_viscosity_ratio: float = 10.0
 
     # Output
     output_files: tuple[str, ...] = field(
@@ -117,13 +135,43 @@ class SU2HypersonicConfig:
         else:
             restart_lines = "RESTART_SOL= NO"
 
-        config_content = f"""% ------- Hypersonic Blunt Body Aerothermodynamics - RANS Config --------
-% Axisymmetric RANS, {self.solver}, M={self.mach}, Alt=30 km
-% Turbulence: {self.turb_model}, Wall T={self.wall_temperature:.0f} K (isothermal)
+        # Build turbulence model section (only for RANS)
+        if self.solver == "RANS":
+            turb_section = f"""KIND_TURB_MODEL= {self.turb_model}
+FREESTREAM_TURBULENCEINTENSITY= {self.freestream_turbulence_intensity}
+FREESTREAM_TURB2LAMVISCRATIO= {self.freestream_turbulence_viscosity_ratio}
+
+% Turbulence numerics
+CONV_NUM_METHOD_TURB= SCALAR_UPWIND
+MUSCL_TURB= NO
+SLOPE_LIMITER_TURB= VENKATAKRISHNAN
+
+TIME_DISCRE_TURB= EULER_IMPLICIT"""
+        else:
+            turb_section = ""
+
+        # CFL adapt params
+        cfl_adapt_params = (
+            f"( {self.cfl_adapt_min}, {self.cfl_adapt_max}, "
+            f"{self.cfl_adapt_decrease}, {self.cfl_adapt_increase} )"
+        )
+
+        # Build boundary conditions
+        if self.solver == "EULER":
+            bc_section = f"""MARKER_EULER= ( {self.wall_marker} )
+MARKER_FAR= ( {self.farfield_marker} )
+MARKER_SYM= ( {self.sym_marker} )"""
+        else:
+            bc_section = f"""MARKER_ISOTHERMAL= ( {self.wall_marker}, {self.wall_temperature:.1f} )
+MARKER_FAR= ( {self.farfield_marker} )
+MARKER_SYM= ( {self.sym_marker} )"""
+
+        config_content = f"""% ------- Hypersonic Blunt Body Aerothermodynamics - {self.solver} Config --------
+% Axisymmetric {self.solver}, M={self.mach}, Alt=30 km
 
 % -------------------- SOLVER CONFIGURATION --------------------
 SOLVER= {self.solver}
-KIND_TURB_MODEL= {self.turb_model}
+{turb_section}
 MATH_PROBLEM= DIRECT
 {restart_lines}
 AXISYMMETRIC= {'YES' if self.axisymmetric else 'NO'}
@@ -144,29 +192,21 @@ REYNOLDS_NUMBER= {self.reynolds_number}
 REYNOLDS_LENGTH= {self.ref_length}
 
 % -------------------- BOUNDARY CONDITIONS ---------------------
-MARKER_ISOTHERMAL= ( {self.wall_marker}, {self.wall_temperature:.1f} )
-MARKER_FAR= ( {self.farfield_marker} )
-MARKER_SYM= ( {self.sym_marker} )
+{bc_section}
 
 % -------------------- NUMERICAL METHOD ------------------------
 CONV_NUM_METHOD_FLOW= {self.conv_num_method}
 MUSCL_FLOW= {'YES' if self.muscl else 'NO'}
 SLOPE_LIMITER_FLOW= {self.limiter}
 
-% Turbulence numerics
-CONV_NUM_METHOD_TURB= SCALAR_UPWIND
-MUSCL_TURB= NO
-SLOPE_LIMITER_TURB= VENKATAKRISHNAN
-
 % Time discretization
 TIME_DISCRE_FLOW= EULER_IMPLICIT
-TIME_DISCRE_TURB= EULER_IMPLICIT
 
 % -------------------- LINEAR SOLVER ---------------------------
-LINEAR_SOLVER= FGMRES
-LINEAR_SOLVER_PREC= ILU
-LINEAR_SOLVER_ERROR= 1E-6
-LINEAR_SOLVER_ITER= 10
+LINEAR_SOLVER= {self.linear_solver}
+LINEAR_SOLVER_PREC= {self.linear_solver_prec}
+LINEAR_SOLVER_ERROR= {self.linear_solver_error}
+LINEAR_SOLVER_ITER= {self.linear_solver_iter}
 
 % -------------------- MULTIGRID ------------------------------
 MGLEVEL= 0
@@ -175,7 +215,7 @@ MGLEVEL= 0
 ITER= {self.iterations}
 CFL_NUMBER= {self.cfl_number}
 CFL_ADAPT= {'YES' if self.cfl_adapt else 'NO'}
-CFL_ADAPT_PARAM= ( 0.1, 2.0, 0.5, 100.0 )
+CFL_ADAPT_PARAM= {cfl_adapt_params}
 CONV_FIELD= RMS_DENSITY
 CONV_RESIDUAL_MINVAL= {self.conv_residual_minval}
 CONV_STARTITER= 100
@@ -237,6 +277,102 @@ MESH_FORMAT= SU2
         """
         new = copy.deepcopy(self)
         new.wall_temperature = t_wall
+        return new
+
+    def as_euler(self) -> "SU2HypersonicConfig":
+        """Return a copy configured as an inviscid Euler solver.
+
+        Used for the first stage of the Euler-then-RANS workflow:
+        establish the bow shock cleanly before enabling turbulence.
+
+        Returns:
+            New SU2HypersonicConfig with SOLVER=EULER and no turbulence.
+        """
+        new = copy.deepcopy(self)
+        new.solver = "EULER"
+        return new
+
+    def as_first_order_rans(self) -> "SU2HypersonicConfig":
+        """Return a copy configured as first-order RANS (no MUSCL).
+
+        First-order spatial accuracy is more stable for initial convergence
+        in hypersonic flows. Use this for the initial RANS stage, then
+        restart with second-order MUSCL for the final solution.
+
+        Returns:
+            New SU2HypersonicConfig with MUSCL_FLOW=NO.
+        """
+        new = copy.deepcopy(self)
+        new.muscl = False
+        return new
+
+    def with_first_order(self) -> "SU2HypersonicConfig":
+        """Return a copy with first-order spatial accuracy (MUSCL disabled).
+
+        Used for initial stabilization before switching to second-order.
+
+        Returns:
+            New SU2HypersonicConfig with MUSCL_FLOW=NO.
+        """
+        new = copy.deepcopy(self)
+        new.muscl = False
+        return new
+
+    def with_cfl(self, cfl: float) -> "SU2HypersonicConfig":
+        """Return a copy with a different CFL number.
+
+        Args:
+            cfl: New CFL number.
+
+        Returns:
+            New SU2HypersonicConfig with updated CFL.
+        """
+        new = copy.deepcopy(self)
+        new.cfl_number = cfl
+        return new
+
+    def with_turbulence_init(
+        self,
+        intensity: float = 0.05,
+        viscosity_ratio: float = 10.0,
+    ) -> "SU2HypersonicConfig":
+        """Return a copy with different turbulence initialization for SA.
+
+        Args:
+            intensity: Freestream turbulence intensity (0-1).
+            viscosity_ratio: Freestream turbulence-to-laminar viscosity ratio.
+
+        Returns:
+            New SU2HypersonicConfig with updated turbulence init.
+        """
+        new = copy.deepcopy(self)
+        new.freestream_turbulence_intensity = intensity
+        new.freestream_turbulence_viscosity_ratio = viscosity_ratio
+        return new
+
+    def with_cfl_adapt(
+        self,
+        cfl_min: float = 0.01,
+        cfl_max: float = 1.0,
+        decrease: float = 0.5,
+        increase: float = 1.5,
+    ) -> "SU2HypersonicConfig":
+        """Return a copy with different CFL adaptation parameters.
+
+        Args:
+            cfl_min: Minimum CFL during adaptation.
+            cfl_max: Maximum CFL during adaptation.
+            decrease: CFL decrease factor when divergence detected.
+            increase: CFL increase factor when converging.
+
+        Returns:
+            New SU2HypersonicConfig with updated CFL adapt params.
+        """
+        new = copy.deepcopy(self)
+        new.cfl_adapt_min = cfl_min
+        new.cfl_adapt_max = cfl_max
+        new.cfl_adapt_decrease = decrease
+        new.cfl_adapt_increase = increase
         return new
 
 

@@ -82,6 +82,26 @@ class TestSU2HypersonicConfigDefaults:
         assert "RESTART" in config.output_files
         assert "PARAVIEW" in config.output_files
 
+    def test_default_turbulence_intensity(self):
+        """Default turbulence intensity should be 0.05."""
+        config = SU2HypersonicConfig()
+        assert config.freestream_turbulence_intensity == 0.05
+
+    def test_default_turbulence_viscosity_ratio(self):
+        """Default turbulence viscosity ratio should be 10.0."""
+        config = SU2HypersonicConfig()
+        assert config.freestream_turbulence_viscosity_ratio == 10.0
+
+    def test_default_cfl_adapt_min(self):
+        """Default CFL adapt min should be 0.1."""
+        config = SU2HypersonicConfig()
+        assert config.cfl_adapt_min == 0.1
+
+    def test_default_cfl_adapt_max(self):
+        """Default CFL adapt max should be 2.0."""
+        config = SU2HypersonicConfig()
+        assert config.cfl_adapt_max == 2.0
+
 
 class TestSU2HypersonicConfigWrite:
     """Tests for config file generation."""
@@ -130,6 +150,8 @@ class TestSU2HypersonicConfigWrite:
             "RESTART_SOL= NO",
             "MESH_FILENAME= mesh.su2",
             "MESH_FORMAT= SU2",
+            "FREESTREAM_TURBULENCEINTENSITY= 0.05",
+            "FREESTREAM_TURB2LAMVISCRATIO= 10.0",
         ]
 
         for key in required_keys:
@@ -177,6 +199,18 @@ class TestSU2HypersonicConfigWrite:
         content = cfg_path.read_text()
         assert "CFL_ADAPT_PARAM= ( 0.1, 2.0, 0.5, 100.0 )" in content
 
+    def test_cfg_cfl_adapt_params_custom(self, tmp_path: Path):
+        """Custom CFL adapt parameters should appear in config."""
+        config = SU2HypersonicConfig(
+            cfl_adapt_min=0.005,
+            cfl_adapt_max=0.5,
+            cfl_adapt_decrease=0.5,
+            cfl_adapt_increase=1.5,
+        )
+        cfg_path = config.write(tmp_path)
+        content = cfg_path.read_text()
+        assert "CFL_ADAPT_PARAM= ( 0.005, 0.5, 0.5, 1.5 )" in content
+
     def test_cfg_gas_properties(self, tmp_path: Path):
         """Gas properties should be in the config."""
         config = SU2HypersonicConfig()
@@ -186,12 +220,14 @@ class TestSU2HypersonicConfigWrite:
         assert "GAS_CONSTANT= 287.058" in content
 
     def test_cfg_freestream_rans(self, tmp_path: Path):
-        """RANS config should include density and viscosity."""
+        """RANS config should include density, viscosity, and turbulence init."""
         config = SU2HypersonicConfig()
         cfg_path = config.write(tmp_path)
         content = cfg_path.read_text()
         assert "FREESTREAM_DENSITY=" in content
         assert "FREESTREAM_VISCOSITY=" in content
+        assert "FREESTREAM_TURBULENCEINTENSITY=" in content
+        assert "FREESTREAM_TURB2LAMVISCRATIO=" in content
 
     def test_cfg_output_files(self, tmp_path: Path):
         """Output files section should be correct."""
@@ -213,6 +249,146 @@ class TestSU2HypersonicConfigWrite:
         out_dir = tmp_path / "nested" / "dir"
         cfg_path = config.write(out_dir)
         assert cfg_path.exists()
+
+
+class TestAsEuler:
+    """Tests for as_euler() method."""
+
+    def test_as_euler_returns_copy(self):
+        """as_euler() should return a new config, not modify original."""
+        original = SU2HypersonicConfig()
+        euler = original.as_euler()
+        assert original.solver == "RANS"
+        assert euler.solver == "EULER"
+
+    def test_as_euler_preserves_mach(self):
+        """as_euler() should preserve Mach number."""
+        config = SU2HypersonicConfig(mach=12.0)
+        euler = config.as_euler()
+        assert euler.mach == 12.0
+
+    def test_as_euler_preserves_wall_temp(self):
+        """as_euler() should preserve wall temperature."""
+        config = SU2HypersonicConfig(wall_temperature=500.0)
+        euler = config.as_euler()
+        assert euler.wall_temperature == 500.0
+
+    def test_as_euler_cfg_content(self, tmp_path: Path):
+        """Euler config should have SOLVER= EULER and no turbulence."""
+        config = SU2HypersonicConfig().as_euler()
+        cfg_path = config.write(tmp_path)
+        content = cfg_path.read_text()
+        assert "SOLVER= EULER" in content
+        assert "KIND_TURB_MODEL" not in content
+        assert "TIME_DISCRE_TURB" not in content
+        assert "MARKER_EULER= ( body )" in content
+        assert "MARKER_ISOTHERMAL" not in content
+
+    def test_as_euler_no_turbulence_section(self, tmp_path: Path):
+        """Euler config should not contain turbulence numerics."""
+        config = SU2HypersonicConfig().as_euler()
+        cfg_path = config.write(tmp_path)
+        content = cfg_path.read_text()
+        assert "CONV_NUM_METHOD_TURB" not in content
+        assert "MUSCL_TURB" not in content
+        assert "FREESTREAM_TURBULENCEINTENSITY" not in content
+        assert "FREESTREAM_TURB2LAMVISCRATIO" not in content
+
+
+class TestWithFirstOrder:
+    """Tests for with_first_order() method."""
+
+    def test_with_first_order_returns_copy(self):
+        """with_first_order() should return a new config."""
+        original = SU2HypersonicConfig()
+        first_order = original.with_first_order()
+        assert original.muscl is True
+        assert first_order.muscl is False
+
+    def test_with_first_order_cfg_content(self, tmp_path: Path):
+        """First-order config should have MUSCL_FLOW= NO."""
+        config = SU2HypersonicConfig().with_first_order()
+        cfg_path = config.write(tmp_path)
+        content = cfg_path.read_text()
+        assert "MUSCL_FLOW= NO" in content
+
+    def test_with_first_order_preserves_solver(self):
+        """with_first_order() should preserve solver type."""
+        config = SU2HypersonicConfig()
+        first_order = config.with_first_order()
+        assert first_order.solver == "RANS"
+
+
+class TestWithCfl:
+    """Tests for with_cfl() method."""
+
+    def test_with_cfl_returns_copy(self):
+        """with_cfl() should return a new config."""
+        original = SU2HypersonicConfig()
+        modified = original.with_cfl(0.05)
+        assert original.cfl_number == 0.1
+        assert modified.cfl_number == 0.05
+
+    def test_with_cfl_preserves_other_fields(self):
+        """with_cfl() should preserve other fields."""
+        config = SU2HypersonicConfig(mach=12.0)
+        modified = config.with_cfl(0.01)
+        assert modified.mach == 12.0
+
+    def test_with_cfl_in_cfg(self, tmp_path: Path):
+        """CFL change should appear in config."""
+        config = SU2HypersonicConfig().with_cfl(0.05)
+        cfg_path = config.write(tmp_path)
+        content = cfg_path.read_text()
+        assert "CFL_NUMBER= 0.05" in content
+
+
+class TestWithTurbulenceInit:
+    """Tests for with_turbulence_init() method."""
+
+    def test_with_turbulence_init_returns_copy(self):
+        """with_turbulence_init() should return a new config."""
+        original = SU2HypersonicConfig()
+        modified = original.with_turbulence_init(
+            intensity=0.01, viscosity_ratio=100.0,
+        )
+        assert original.freestream_turbulence_intensity == 0.05
+        assert original.freestream_turbulence_viscosity_ratio == 10.0
+        assert modified.freestream_turbulence_intensity == 0.01
+        assert modified.freestream_turbulence_viscosity_ratio == 100.0
+
+    def test_with_turbulence_init_in_cfg(self, tmp_path: Path):
+        """Turbulence init should appear in config."""
+        config = SU2HypersonicConfig().with_turbulence_init(
+            intensity=0.01, viscosity_ratio=50.0,
+        )
+        cfg_path = config.write(tmp_path)
+        content = cfg_path.read_text()
+        assert "FREESTREAM_TURBULENCEINTENSITY= 0.01" in content
+        assert "FREESTREAM_TURB2LAMVISCRATIO= 50.0" in content
+
+
+class TestWithCflAdapt:
+    """Tests for with_cfl_adapt() method."""
+
+    def test_with_cfl_adapt_returns_copy(self):
+        """with_cfl_adapt() should return a new config."""
+        original = SU2HypersonicConfig()
+        modified = original.with_cfl_adapt(
+            cfl_min=0.05, cfl_max=3.0, decrease=0.5, increase=200.0,
+        )
+        assert original.cfl_adapt_min == 0.1
+        assert modified.cfl_adapt_min == 0.05
+        assert modified.cfl_adapt_max == 3.0
+
+    def test_with_cfl_adapt_in_cfg(self, tmp_path: Path):
+        """CFL adapt params should appear in config."""
+        config = SU2HypersonicConfig().with_cfl_adapt(
+            cfl_min=0.001, cfl_max=0.3, decrease=0.3, increase=2.0,
+        )
+        cfg_path = config.write(tmp_path)
+        content = cfg_path.read_text()
+        assert "CFL_ADAPT_PARAM= ( 0.001, 0.3, 0.3, 2.0 )" in content
 
 
 class TestWithRestart:

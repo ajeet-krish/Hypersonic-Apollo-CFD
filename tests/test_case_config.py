@@ -20,6 +20,34 @@ class TestCaseConfig:
         assert config.su2_iterations == 5000
         assert config.su2_cfl == 1.0
 
+    def test_default_convergence_strategy(self):
+        """Default convergence strategy should be 'direct'."""
+        config = CaseConfig(
+            name="test", label="Test", preset_fn=generic,
+        )
+        assert config.su2_strategy == "direct"
+
+    def test_default_euler_iterations(self):
+        """Default Euler iterations should be 3000."""
+        config = CaseConfig(
+            name="test", label="Test", preset_fn=generic,
+        )
+        assert config.su2_euler_iterations == 3000
+
+    def test_default_rans_iterations(self):
+        """Default RANS iterations should be 10000."""
+        config = CaseConfig(
+            name="test", label="Test", preset_fn=generic,
+        )
+        assert config.su2_rans_iterations == 10000
+
+    def test_default_mach_ramp_start(self):
+        """Default Mach ramp start should be 5.0."""
+        config = CaseConfig(
+            name="test", label="Test", preset_fn=generic,
+        )
+        assert config.su2_mach_ramp_start == 5.0
+
     def test_output_dir(self):
         """output_dir should be output/{name}."""
         config = CaseConfig(
@@ -56,6 +84,46 @@ class TestCaseConfig:
         assert config.altitude == 50000.0
         assert config.gamma == 1.3
 
+    def test_custom_convergence_strategy(self):
+        """Should accept custom convergence strategy."""
+        config = CaseConfig(
+            name="test",
+            label="Test",
+            preset_fn=generic,
+            su2_strategy="euler-rans",
+        )
+        assert config.su2_strategy == "euler-rans"
+
+    def test_custom_euler_iterations(self):
+        """Should accept custom Euler iterations."""
+        config = CaseConfig(
+            name="test",
+            label="Test",
+            preset_fn=generic,
+            su2_euler_iterations=5000,
+        )
+        assert config.su2_euler_iterations == 5000
+
+    def test_custom_rans_iterations(self):
+        """Should accept custom RANS iterations."""
+        config = CaseConfig(
+            name="test",
+            label="Test",
+            preset_fn=generic,
+            su2_rans_iterations=20000,
+        )
+        assert config.su2_rans_iterations == 20000
+
+    def test_custom_mach_ramp_start(self):
+        """Should accept custom Mach ramp start."""
+        config = CaseConfig(
+            name="test",
+            label="Test",
+            preset_fn=generic,
+            su2_mach_ramp_start=6.0,
+        )
+        assert config.su2_mach_ramp_start == 6.0
+
     def test_preset_fn_callable(self):
         """preset_fn should return BluntBodyConfig."""
         config = CaseConfig(
@@ -68,6 +136,18 @@ class TestCaseConfig:
         """Two configs with same params should be equal."""
         c1 = CaseConfig(name="a", label="A", preset_fn=generic)
         c2 = CaseConfig(name="a", label="A", preset_fn=generic)
+        assert c1 == c2
+
+    def test_equal_configs_with_strategy(self):
+        """Two configs with same strategy params should be equal."""
+        c1 = CaseConfig(
+            name="a", label="A", preset_fn=generic,
+            su2_strategy="euler-rans", su2_euler_iterations=3000,
+        )
+        c2 = CaseConfig(
+            name="a", label="A", preset_fn=generic,
+            su2_strategy="euler-rans", su2_euler_iterations=3000,
+        )
         assert c1 == c2
 
 

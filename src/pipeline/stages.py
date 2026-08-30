@@ -2,11 +2,14 @@
 
 KEY RULE: Plots go to docs/assets/images/{case}/, artifacts go to output/{case}/.
 """
+from __future__ import annotations
+
 import json
 import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -19,6 +22,10 @@ from validation.newtonian import stagnation_cp
 from validation.shock_relations import normal_shock
 
 from .case_config import CaseConfig, PipelineStage
+
+if TYPE_CHECKING:
+    from cfd.config import SU2HypersonicConfig
+    from cfd.solver import SU2Results, SU2Solver
 
 
 def run_geometry_stage(config: CaseConfig) -> int:
@@ -217,7 +224,12 @@ def run_mesh_stage(config: CaseConfig) -> int:
 
 
 def run_su2_stage(config: CaseConfig) -> int:
-    """Run SU2 RANS CFD simulation for the blunt body.
+    """Run SU2 CFD simulation for the blunt body.
+
+    Supports three convergence strategies:
+    - direct: Single RANS run (legacy, often fails at hypersonic Mach numbers)
+    - euler-rans: Euler first to establish bow shock, then RANS restart
+    - mach-ramp: Start at lower Mach, restart at target Mach
 
     Produces:
         - output/{name}/su2/config.cfg: SU2 configuration file
@@ -229,19 +241,18 @@ def run_su2_stage(config: CaseConfig) -> int:
     Returns:
         0 on success, 1 on failure.
     """
-    print(f"\n[{config.label}] SU2 RANS stage")
+    print(f"\n[{config.label}] SU2 stage (strategy={config.su2_strategy})")
 
     from cfd.config import SU2HypersonicConfig
     from cfd.solver import SU2Solver
     from physics.atmosphere import standard_atmosphere
-    from viz.convergence import plot_convergence
 
     # Compute atmosphere for freestream conditions
     atm = standard_atmosphere(config.altitude)
     V_inf = atm.speed_of_sound * config.mach
     reynolds_number = atm.density * V_inf * 1.0 / atm.dynamic_viscosity
 
-    # Build SU2 config
+    # Base SU2 config
     su2_config = SU2HypersonicConfig(
         mach=config.mach,
         freestream_pressure=atm.pressure,
@@ -270,23 +281,243 @@ def run_su2_stage(config: CaseConfig) -> int:
         shutil.copy2(mesh_path, mesh_dest)
     mesh_filename = mesh_path.name
 
-    # Write config
+    solver = SU2Solver()
+
+    # Dispatch to strategy
+    if config.su2_strategy == "euler-rans":
+        return _run_euler_rans(
+            su2_config, solver, su2_dir, mesh_filename, config,
+        )
+    elif config.su2_strategy == "mach-ramp":
+        return _run_mach_ramp(
+            su2_config, solver, su2_dir, mesh_filename, config,
+        )
+    else:
+        return _run_direct(
+            su2_config, solver, su2_dir, mesh_filename, config,
+        )
+
+
+def _run_direct(
+    su2_config: SU2HypersonicConfig,
+    solver: SU2Solver,
+    su2_dir: Path,
+    mesh_filename: str,
+    config: CaseConfig,
+) -> int:
+    """Run a single direct RANS solve (legacy approach)."""
     cfg_path = su2_config.write(su2_dir, mesh_filename=mesh_filename)
     print(f"  Config: {cfg_path}")
+    print(f"  Running SU2 RANS (M={config.mach}, max iter={config.su2_iterations})...")
 
-    # Run solver
-    print(f"  Running SU2 (M={config.mach}, max iter={config.su2_iterations})...")
-    solver = SU2Solver()
     results = solver.run(cfg_path, su2_dir, timeout=7200)
+    return _report_and_save(results, su2_config, su2_dir, config)
 
-    # Save results JSON
+
+def _run_euler_rans(
+    su2_config: SU2HypersonicConfig,
+    solver: SU2Solver,
+    su2_dir: Path,
+    mesh_filename: str,
+    config: CaseConfig,
+) -> int:
+    """Two-stage RANS convergence: first-order then second-order restart.
+
+    Stage 1: First-order RANS (MUSCL disabled) with conservative settings
+             to establish the shock structure and turbulence field.
+    Stage 2: Second-order RANS restart from the first-order solution.
+
+    Note: Direct Euler-to-RANS restart fails in SU2 v8.4 because Euler
+    produces 4-field restarts (rho, rhoU, rhoV, rhoE) but RANS expects 5
+    fields (rho, rhoU, rhoV, rhoE, nu_turb). First-order RANS from scratch
+    with proper SA turbulence initialization is the robust approach.
+    """
+    # --- Stage 1: First-order RANS ---
+    print(f"\n  === Stage 1: First-order RANS ({config.su2_euler_iterations} iters) ===")
+    fo_config = su2_config.as_first_order_rans()
+    fo_config.iterations = config.su2_euler_iterations
+    # Use very conservative CFL for initial stability
+    fo_cfl = min(config.su2_cfl, 0.01)
+    fo_config = fo_config.with_cfl(fo_cfl)
+    fo_config = fo_config.with_cfl_adapt(
+        cfl_min=0.1, cfl_max=2.0, decrease=0.5, increase=100.0,
+    )
+    # Use BCGSTAB linear solver (more robust than FGMRES for hypersonic)
+    # and relax linear solver tolerance for initial stability
+    fo_config.linear_solver = "BCGSTAB"
+    fo_config.linear_solver_error = 1e-2
+    fo_config.linear_solver_iter = 20
+    from cfd.config import SU2HypersonicConfig as _Cfg
+    fo_output = _Cfg(**fo_config.__dict__)
+    fo_output.output_files = ("RESTART",)
+
+    cfg_path = fo_output.write(su2_dir, mesh_filename=mesh_filename)
+    print(f"  Config: {cfg_path}")
+    print(f"  CFL: {fo_cfl}, First-order: YES, BCGSTAB linear solver")
+
+    fo_results = solver.run(cfg_path, su2_dir, timeout=3600)
+    fo_drop = fo_results.residual_drop
+    print(f"  First-order complete: {fo_results.iterations} iters, "
+          f"drop={fo_drop:.2f} orders")
+
+    if fo_drop < 2.0:
+        print("  WARNING: First-order RANS did not converge well. "
+              "Second-order restart may be poor.")
+
+    # Find restart file (SU2 v8.x writes restart.dat, copies to solution.dat)
+    restart_file = _find_restart_file(su2_dir)
+    if restart_file is None:
+        print("  ERROR: No first-order restart file found. "
+              "Falling back to direct RANS.")
+        return _run_direct(su2_config, solver, su2_dir, mesh_filename, config)
+
+    # Copy restart.dat to solution.dat (SU2 v8.4 reads solution.dat by default)
+    import shutil
+    solution_path = su2_dir / "solution.dat"
+    shutil.copy2(restart_file, solution_path)
+    print(f"  Restart file: {restart_file.name} -> solution.dat")
+
+    # --- Stage 2: Second-order RANS restart ---
+    print(f"\n  === Stage 2: Second-order RANS restart "
+          f"({config.su2_rans_iterations} iters) ===")
+    rans_config = su2_config.with_restart(Path("solution.dat"))
+    rans_config.iterations = config.su2_rans_iterations
+    rans_cfl = min(config.su2_cfl, 0.05)
+    rans_config = rans_config.with_cfl(rans_cfl)
+    rans_config = rans_config.with_cfl_adapt(
+        cfl_min=0.1, cfl_max=2.0, decrease=0.5, increase=100.0,
+    )
+
+    cfg_path = rans_config.write(su2_dir, mesh_filename=mesh_filename)
+    print(f"  Config: {cfg_path}")
+    print(f"  CFL: {rans_cfl}, Second-order: YES, SA with freestream init")
+
+    rans_results = solver.run(cfg_path, su2_dir, timeout=7200)
+
+    # Save results and plot
+    return _report_and_save(rans_results, rans_config, su2_dir, config)
+
+
+def _run_mach_ramp(
+    su2_config: SU2HypersonicConfig,
+    solver: SU2Solver,
+    su2_dir: Path,
+    mesh_filename: str,
+    config: CaseConfig,
+) -> int:
+    """Mach ramping strategy with first-order RANS staging.
+
+    Stage 1: First-order RANS at lower Mach (e.g. M=5) to converge.
+    Stage 2: Second-order RANS restart at target Mach from M=5 solution.
+    """
+    ramp_mach = config.su2_mach_ramp_start
+
+    # --- Stage 1: First-order RANS at ramp Mach ---
+    print(f"\n  === Stage 1: First-order RANS at M={ramp_mach} ===")
+    fo_config = su2_config.with_mach(ramp_mach).as_first_order_rans()
+    fo_config.iterations = config.su2_euler_iterations
+    ramp_cfl = min(config.su2_cfl, 0.01)
+    fo_config = fo_config.with_cfl(ramp_cfl)
+    fo_config = fo_config.with_cfl_adapt(
+        cfl_min=0.1, cfl_max=2.0, decrease=0.5, increase=100.0,
+    )
+    fo_config.linear_solver = "BCGSTAB"
+    fo_config.linear_solver_error = 1e-2
+    fo_config.linear_solver_iter = 20
+
+    cfg_path = fo_config.write(su2_dir, mesh_filename=mesh_filename)
+    print(f"  Config: {cfg_path}")
+
+    fo_results = solver.run(cfg_path, su2_dir, timeout=3600)
+    print(f"  First-order M={ramp_mach}: {fo_results.iterations} iters, "
+          f"drop={fo_results.residual_drop:.2f}")
+
+    restart_file = _find_restart_file(su2_dir)
+    if restart_file is None:
+        print(f"  ERROR: No restart file found after first-order M={ramp_mach}.")
+        return 1
+
+    # --- Stage 2: Second-order RANS at target Mach ---
+    print(f"\n  === Stage 2: Second-order RANS at M={config.mach} (target) ===")
+    import shutil
+    shutil.copy2(restart_file, su2_dir / "solution.dat")
+
+    target_config = su2_config.with_restart(Path("solution.dat"))
+    target_config.iterations = config.su2_rans_iterations
+    target_cfl = min(config.su2_cfl, 0.05)
+    target_config = target_config.with_cfl(target_cfl)
+    target_config = target_config.with_cfl_adapt(
+        cfl_min=0.1, cfl_max=2.0, decrease=0.5, increase=100.0,
+    )
+
+    cfg_path = target_config.write(su2_dir, mesh_filename=mesh_filename)
+    print(f"  Config: {cfg_path}")
+
+    target_results = solver.run(cfg_path, su2_dir, timeout=7200)
+    return _report_and_save(target_results, target_config, su2_dir, config)
+
+
+def _find_restart_file(su2_dir: Path) -> Path | None:
+    """Find the latest SU2 restart file in the working directory.
+
+    SU2 v8.x names restart files as 'restart.dat' (or flow_restart_XXX.dat
+    in older versions).
+
+    Args:
+        su2_dir: Directory to search.
+
+    Returns:
+        Path to the restart file, or None if not found.
+    """
+    import re
+
+    # Try SU2 v8.x naming first: restart.dat
+    restart_v8 = su2_dir / "restart.dat"
+    if restart_v8.exists():
+        return restart_v8
+
+    # Fallback: flow_restart_000XXX.dat (older SU2 versions)
+    restart_files = list(su2_dir.glob("flow_restart_*.dat"))
+    if not restart_files:
+        return None
+
+    # Sort by iteration number (the numeric part of the filename)
+    def _iter_num(p: Path) -> int:
+        match = re.search(r"flow_restart_(\d+)\.dat", p.name)
+        return int(match.group(1)) if match else 0
+
+    restart_files.sort(key=_iter_num)
+    return restart_files[-1]
+
+
+def _report_and_save(
+    results: SU2Results,
+    su2_config: SU2HypersonicConfig,
+    su2_dir: Path,
+    config: CaseConfig,
+) -> int:
+    """Save SU2 results JSON and convergence plot.
+
+    Args:
+        results: Parsed SU2 results.
+        su2_config: SU2 configuration used.
+        su2_dir: SU2 output directory.
+        config: Pipeline case config.
+
+    Returns:
+        0 on success, 1 if not converged.
+    """
+    from viz.convergence import plot_convergence
+
     results_dict = {
         "case": config.name,
         "mach": config.mach,
         "altitude_m": config.altitude,
+        "strategy": config.su2_strategy,
         "converged": results.converged,
         "iterations": results.iterations,
         "residual_drop": round(results.residual_drop, 4),
+        "final_residual_log10": round(results.final_residual, 4),
         "stagnation_pressure_Pa": (
             round(results.stagnation_pressure, 2)
             if results.stagnation_pressure is not None else None
@@ -312,9 +543,10 @@ def run_su2_stage(config: CaseConfig) -> int:
 
     # Print summary
     status = "CONVERGED" if results.converged else "DID NOT CONVERGE"
-    print(f"  Status: {status}")
+    print(f"\n  === Final Status: {status} ===")
     print(f"  Iterations: {results.iterations}")
     print(f"  Residual drop: {results.residual_drop:.2f} orders")
+    print(f"  Final rms[Rho]: 10^{results.final_residual:.2f}")
     if results.stagnation_pressure is not None:
         print(f"  Stagnation pressure: {results.stagnation_pressure:.1f} Pa")
     if results.max_mach is not None:
@@ -323,10 +555,179 @@ def run_su2_stage(config: CaseConfig) -> int:
     return 0 if results.converged else 1
 
 
+def run_postprocess_stage(config: CaseConfig) -> int:
+    """Post-process SU2 solution: extract physics, generate plots.
+
+    Produces:
+        - output/{name}/postprocess/postprocess.json: derived quantities
+        - docs/assets/images/{name}/mach_contour.png: Mach contour
+        - docs/assets/images/{name}/pressure_contour.png: pressure contour
+        - docs/assets/images/{name}/temperature_contour.png: temperature contour
+        - docs/assets/images/{name}/heat_flux.png: surface heat flux
+        - docs/assets/images/{name}/shock_structure.png: shock structure
+        - docs/assets/images/{name}/shock_standoff.png: standoff measurement
+        - docs/assets/images/{name}/body_3d.png: 3D revolved body
+
+    Returns:
+        0 on success, 1 on failure.
+    """
+    print(f"\n[{config.label}] Post-processing stage")
+
+    from cfd.postprocess import (
+        build_results_summary,
+        extract_surface_profiles,
+        save_postprocess_results,
+    )
+    from cfd.vtu_parser import parse_vtu
+    from geometry.blunt_body import generate_contour
+    from viz.contour import (
+        plot_mach_contour,
+        plot_pressure_contour,
+        plot_temperature_contour,
+    )
+    from viz.geometry_3d import plot_body_3d
+    from viz.heat_flux import plot_surface_heat_flux
+    from viz.shock import plot_shock_standoff_measurement, plot_shock_structure
+
+    # Load body contour
+    body_config = config.preset_fn()
+    x_body, r_body = generate_contour(body_config)
+
+    # Load VTU solution
+    vtu_path = Path(config.output_dir) / "su2" / "flow.vtu"
+    if not vtu_path.exists():
+        print(f"  ERROR: VTU file not found at {vtu_path}. Run SU2 stage first.")
+        return 1
+
+    print(f"  Loading: {vtu_path}")
+    data = parse_vtu(vtu_path)
+
+    # Extract surface profiles
+    profiles = extract_surface_profiles(data, (x_body, r_body))
+    print(f"  Surface profiles: {len(profiles['s'])} points")
+
+    # Build results summary
+    summary = build_results_summary(data, config, (x_body, r_body))
+
+    # Save postprocess JSON
+    post_dir = Path(config.output_dir) / "postprocess"
+    post_dir.mkdir(parents=True, exist_ok=True)
+    save_postprocess_results(summary, post_dir / "postprocess.json")
+    print(f"  Results: {post_dir / 'postprocess.json'}")
+
+    # Images directory
+    images_dir = Path(config.images_dir)
+    images_dir.mkdir(parents=True, exist_ok=True)
+
+    n_plots = 0
+    n_ok = 0
+
+    # 1. Mach contour
+    n_plots += 1
+    try:
+        path = plot_mach_contour(
+            data, images_dir / "mach_contour.png",
+            body_contour=(x_body, r_body),
+        )
+        print(f"  Plot: {path}")
+        n_ok += 1
+    except (OSError, RuntimeError) as exc:
+        print(f"  Mach contour FAILED: {exc}")
+
+    # 2. Pressure contour
+    n_plots += 1
+    try:
+        path = plot_pressure_contour(
+            data, images_dir / "pressure_contour.png",
+            body_contour=(x_body, r_body),
+        )
+        print(f"  Plot: {path}")
+        n_ok += 1
+    except (OSError, RuntimeError) as exc:
+        print(f"  Pressure contour FAILED: {exc}")
+
+    # 3. Temperature contour
+    n_plots += 1
+    try:
+        path = plot_temperature_contour(
+            data, images_dir / "temperature_contour.png",
+            body_contour=(x_body, r_body),
+        )
+        print(f"  Plot: {path}")
+        n_ok += 1
+    except (OSError, RuntimeError) as exc:
+        print(f"  Temperature contour FAILED: {exc}")
+
+    # 4. Heat flux
+    n_plots += 1
+    try:
+        path = plot_surface_heat_flux(
+            profiles["s"], profiles["q"],
+            images_dir / "heat_flux.png",
+        )
+        print(f"  Plot: {path}")
+        n_ok += 1
+    except (OSError, RuntimeError) as exc:
+        print(f"  Heat flux plot FAILED: {exc}")
+
+    # 5. Shock structure
+    n_plots += 1
+    try:
+        path = plot_shock_structure(
+            data, images_dir / "shock_structure.png",
+            body_contour=(x_body, r_body),
+        )
+        print(f"  Plot: {path}")
+        n_ok += 1
+    except (OSError, RuntimeError) as exc:
+        print(f"  Shock structure FAILED: {exc}")
+
+    # 6. Shock standoff measurement
+    n_plots += 1
+    try:
+        from cfd.postprocess import measure_shock_standoff_r_nose
+        r_nose = measure_shock_standoff_r_nose(x_body, r_body)
+        path = plot_shock_standoff_measurement(
+            data, images_dir / "shock_standoff.png", R_nose=r_nose,
+        )
+        print(f"  Plot: {path}")
+        n_ok += 1
+    except (OSError, RuntimeError) as exc:
+        print(f"  Shock standoff plot FAILED: {exc}")
+
+    # 7. 3D body
+    n_plots += 1
+    try:
+        path = plot_body_3d(body_config, images_dir / "body_3d.png")
+        print(f"  Plot: {path}")
+        n_ok += 1
+    except (OSError, RuntimeError) as exc:
+        print(f"  3D body plot FAILED: {exc}")
+
+    # Print summary
+    stag = summary["stagnation"]
+    shock = summary["shock_standoff"]
+    heating = summary["total_heating"]
+    rg = summary["real_gas_correction"]
+
+    print("\n  --- Post-Processing Summary ---")
+    print(f"  Stagnation pressure: {stag['pressure_Pa']:.1f} Pa")
+    print(f"  Stagnation temperature: {stag['temperature_K']:.1f} K")
+    print(f"  Stagnation heat flux: {stag['heat_flux_W_m2']:.1f} W/m^2" if stag['heat_flux_W_m2'] else "  Stagnation heat flux: N/A")
+    print(f"  Shock standoff: {shock['delta_m']*1000:.2f} mm (delta/R = {shock['delta_over_R']:.4f})" if shock['delta_over_R'] else "  Shock standoff: N/A")
+    print(f"  Total heating: {heating['Q_total_W']:.1f} W")
+    print(f"  Real-gas correction: {rg['correction_factor']:.4f}")
+    print(f"  Max Mach: {summary['field_extrema']['max_mach']:.2f}" if summary['field_extrema']['max_mach'] else "  Max Mach: N/A")
+    print(f"  Plots: {n_ok}/{n_plots} generated")
+
+    return 0 if n_ok == n_plots else 1
+
+
 STAGE_FUNCTIONS: dict[PipelineStage, Callable[[CaseConfig], int]] = {
     PipelineStage.GEOMETRY: run_geometry_stage,
     PipelineStage.MESH: run_mesh_stage,
     PipelineStage.SU2: run_su2_stage,
+    PipelineStage.POSTPROCESS: run_postprocess_stage,
 }
 
 

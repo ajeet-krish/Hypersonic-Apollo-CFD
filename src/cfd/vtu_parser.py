@@ -224,8 +224,8 @@ def extract_stagnation_values(data: VTUData) -> dict[str, float]:
         data: Parsed VTU data.
 
     Returns:
-        Dictionary with Temperature, Pressure, Density, Mach at the
-        stagnation point. Missing fields are omitted.
+        Dictionary with Temperature, Pressure, Density, Mach, and
+        Heat_Flux at the stagnation point. Missing fields are omitted.
     """
     if data.pressure is None:
         return {}
@@ -242,6 +242,11 @@ def extract_stagnation_values(data: VTUData) -> dict[str, float]:
         result["Density"] = float(data.density[idx])
     if data.mach is not None:
         result["Mach"] = float(data.mach[idx])
+
+    # Extract Heat_Flux at the stagnation point
+    heat_flux = data.point_data.get("Heat_Flux")
+    if heat_flux is not None:
+        result["Heat_Flux"] = float(heat_flux[idx])
 
     # Store stagnation coordinates
     result["x"] = float(data.coordinates[idx, 0])
