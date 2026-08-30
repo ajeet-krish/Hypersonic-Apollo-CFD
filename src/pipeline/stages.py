@@ -150,8 +150,75 @@ def run_geometry_stage(config: CaseConfig) -> int:
     return 0
 
 
+def run_mesh_stage(config: CaseConfig) -> int:
+    """Generate a Gmsh shock-aligned mesh for the blunt body.
+
+    Produces:
+        - output/{name}/mesh/{name}.su2: SU2 mesh file
+        - output/{name}/mesh/mesh_quality.json: mesh quality metrics
+        - docs/assets/images/{name}/mesh.png: mesh visualization
+
+    Returns:
+        0 on success, 1 on failure.
+    """
+    print(f"\n[{config.label}] Mesh stage")
+
+    from cfd.mesh import generate_body_mesh
+    from cfd.mesh_config import MeshConfig
+    from cfd.mesh_quality import check_mesh_quality, validate_su2_mesh
+    from viz.mesh import plot_mesh
+
+    body_config = config.preset_fn()
+    mesh_config = MeshConfig.for_tier(config.mesh_tier)
+
+    mesh_dir = Path(config.output_dir) / "mesh"
+    mesh_dir.mkdir(parents=True, exist_ok=True)
+    mesh_path = mesh_dir / f"{config.name}.su2"
+
+    print(f"  Tier: {config.mesh_tier}")
+    print(f"  Target cells: ~{mesh_config.estimated_cell_count:,}")
+    print(f"  Shock refinement: {mesh_config.shock_refinement}")
+
+    try:
+        generate_body_mesh(
+            body_config, mesh_config, config.mach, mesh_path,
+        )
+    except (RuntimeError, OSError) as exc:
+        print(f"  Mesh generation FAILED: {exc}")
+        return 1
+
+    print(f"  Mesh: {mesh_path} ({mesh_path.stat().st_size:,} bytes)")
+
+    # Validate mesh
+    is_valid = validate_su2_mesh(mesh_path)
+    print(f"  SU2 valid: {is_valid}")
+
+    # Quality check
+    quality = check_mesh_quality(mesh_path)
+    quality_path = mesh_dir / "mesh_quality.json"
+    with open(quality_path, "w") as f:
+        json.dump(quality, f, indent=2)
+    print(f"  Quality: {quality_path}")
+    print(f"    Cells: {quality['n_cells']:,}")
+    print(f"    Min quality: {quality['min_quality']:.4f}")
+    print(f"    Mean quality: {quality['mean_quality']:.4f}")
+    print(f"    Bad cells: {quality['pct_bad_cells']:.1f}%")
+
+    # Plot mesh
+    images_dir = Path(config.images_dir)
+    images_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        plot_path = plot_mesh(mesh_path, images_dir / "mesh.png")
+        print(f"  Plot: {plot_path}")
+    except (OSError, RuntimeError) as exc:
+        print(f"  Plot FAILED: {exc}")
+
+    return 0 if is_valid else 1
+
+
 STAGE_FUNCTIONS: dict[PipelineStage, Callable[[CaseConfig], int]] = {
     PipelineStage.GEOMETRY: run_geometry_stage,
+    PipelineStage.MESH: run_mesh_stage,
 }
 
 
