@@ -238,7 +238,6 @@ def generate_body_mesh(
         # --- Boundary curves ---
         upstream_line = gmsh.model.geo.addLine(bl, body_pts[0])
         downstream_line = gmsh.model.geo.addLine(body_pts[-1], br)
-        axis_line = gmsh.model.geo.addLine(br, bl)
         far_top = gmsh.model.geo.addLine(tr, tl)
         far_left = gmsh.model.geo.addLine(bl, tl)
         far_right = gmsh.model.geo.addLine(br, tr)
@@ -257,10 +256,14 @@ def generate_body_mesh(
         # --- Physical groups (SU2 markers) ---
         gmsh.model.geo.addPhysicalGroup(1, [body_spline], name="body")
         gmsh.model.geo.addPhysicalGroup(
-            1, [upstream_line, far_left, far_top, far_right, downstream_line],
+            1, [far_left, far_top, far_right, downstream_line],
             name="farfield",
         )
-        gmsh.model.geo.addPhysicalGroup(1, [axis_line], name="sym")
+        # Symmetry axis at r=0: upstream_line goes from farfield left
+        # (r=0) to body nose tip (r=0) and IS in the surface loop.
+        # The old axis_line (br->bl) was NOT in the surface loop and
+        # produced invalid node IDs (-1) in the SU2 mesh export.
+        gmsh.model.geo.addPhysicalGroup(1, [upstream_line], name="sym")
         gmsh.model.geo.addPhysicalGroup(2, [surface], name="fluid")
 
         # --- Synchronize geometry before setting up mesh fields ---

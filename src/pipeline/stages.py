@@ -216,9 +216,117 @@ def run_mesh_stage(config: CaseConfig) -> int:
     return 0 if is_valid else 1
 
 
+def run_su2_stage(config: CaseConfig) -> int:
+    """Run SU2 RANS CFD simulation for the blunt body.
+
+    Produces:
+        - output/{name}/su2/config.cfg: SU2 configuration file
+        - output/{name}/su2/history.csv: convergence history
+        - output/{name}/su2/flow.vtu: solution field data
+        - output/{name}/su2/results.json: summary of simulation results
+        - docs/assets/images/{name}/convergence.png: convergence plot
+
+    Returns:
+        0 on success, 1 on failure.
+    """
+    print(f"\n[{config.label}] SU2 RANS stage")
+
+    from cfd.config import SU2HypersonicConfig
+    from cfd.solver import SU2Solver
+    from physics.atmosphere import standard_atmosphere
+    from viz.convergence import plot_convergence
+
+    # Compute atmosphere for freestream conditions
+    atm = standard_atmosphere(config.altitude)
+    V_inf = atm.speed_of_sound * config.mach
+    reynolds_number = atm.density * V_inf * 1.0 / atm.dynamic_viscosity
+
+    # Build SU2 config
+    su2_config = SU2HypersonicConfig(
+        mach=config.mach,
+        freestream_pressure=atm.pressure,
+        freestream_temperature=atm.temperature,
+        freestream_density=atm.density,
+        freestream_viscosity=atm.dynamic_viscosity,
+        reynolds_number=reynolds_number,
+        cfl_number=config.su2_cfl,
+        iterations=config.su2_iterations,
+    )
+
+    # Output directory
+    su2_dir = Path(config.output_dir) / "su2"
+    su2_dir.mkdir(parents=True, exist_ok=True)
+
+    # Mesh file from Phase 2
+    mesh_path = Path(config.output_dir) / "mesh" / f"{config.name}.su2"
+    if not mesh_path.exists():
+        print(f"  ERROR: Mesh not found at {mesh_path}. Run mesh stage first.")
+        return 1
+
+    # Copy mesh to SU2 working directory (SU2 looks for mesh in cwd)
+    mesh_dest = su2_dir / mesh_path.name
+    if not mesh_dest.exists() or mesh_path.stat().st_size != mesh_dest.stat().st_size:
+        import shutil
+        shutil.copy2(mesh_path, mesh_dest)
+    mesh_filename = mesh_path.name
+
+    # Write config
+    cfg_path = su2_config.write(su2_dir, mesh_filename=mesh_filename)
+    print(f"  Config: {cfg_path}")
+
+    # Run solver
+    print(f"  Running SU2 (M={config.mach}, max iter={config.su2_iterations})...")
+    solver = SU2Solver()
+    results = solver.run(cfg_path, su2_dir, timeout=7200)
+
+    # Save results JSON
+    results_dict = {
+        "case": config.name,
+        "mach": config.mach,
+        "altitude_m": config.altitude,
+        "converged": results.converged,
+        "iterations": results.iterations,
+        "residual_drop": round(results.residual_drop, 4),
+        "stagnation_pressure_Pa": (
+            round(results.stagnation_pressure, 2)
+            if results.stagnation_pressure is not None else None
+        ),
+        "max_mach": (
+            round(results.max_mach, 4)
+            if results.max_mach is not None else None
+        ),
+        "wall_temperature_K": su2_config.wall_temperature,
+        "cfl_number": su2_config.cfl_number,
+    }
+    results_path = su2_dir / "results.json"
+    with open(results_path, "w") as f:
+        json.dump(results_dict, f, indent=2)
+    print(f"  Results: {results_path}")
+
+    # Plot convergence
+    images_dir = Path(config.images_dir)
+    images_dir.mkdir(parents=True, exist_ok=True)
+    if results.history:
+        plot_path = plot_convergence(results.history, images_dir / "convergence.png")
+        print(f"  Convergence plot: {plot_path}")
+
+    # Print summary
+    status = "CONVERGED" if results.converged else "DID NOT CONVERGE"
+    print(f"  Status: {status}")
+    print(f"  Iterations: {results.iterations}")
+    print(f"  Residual drop: {results.residual_drop:.2f} orders")
+    if results.stagnation_pressure is not None:
+        print(f"  Stagnation pressure: {results.stagnation_pressure:.1f} Pa")
+    if results.max_mach is not None:
+        print(f"  Max Mach: {results.max_mach:.2f}")
+
+    return 0 if results.converged else 1
+
+
 STAGE_FUNCTIONS: dict[PipelineStage, Callable[[CaseConfig], int]] = {
     PipelineStage.GEOMETRY: run_geometry_stage,
     PipelineStage.MESH: run_mesh_stage,
+    PipelineStage.SU2: run_su2_stage,
 }
 
 
