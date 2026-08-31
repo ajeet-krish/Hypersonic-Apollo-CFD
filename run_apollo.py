@@ -1,12 +1,13 @@
 """Apollo Command Module headline case runner.
 
 Runs the full Apollo CM pipeline: geometry -> mesh -> SU2 (mach-ramp
-M=5 -> M=12) -> postprocess -> validation -> flight data comparison.
+M=5 -> M=15.6) -> postprocess -> validation -> flight data comparison.
 
-The Apollo CM is a 50-deg sphere-cone with R_nose=0.196m and base
-radius=1.955m. M=12 at 30 km altitude represents a high-heating phase
-of reentry (peak heating is at higher altitude/Mach, beyond perfect-gas
-scope).
+Apollo CM geometry: spherical heat shield R=4.694m + toroidal shoulder
+fillet R=0.196m + 33-deg conical afterbody. Max diameter 3.91m.
+
+AS-202 Case 3 conditions: M=15.6 at 54.6 km altitude (IRJET 2017,
+Shafeeque et al.).
 """
 import argparse
 import sys
@@ -63,13 +64,13 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    # Apollo CM: M=12, 30 km, mach-ramp strategy
+    # Apollo CM: M=15.6, 54.6 km, AS-202 Case 3 (IRJET 2017)
     config = CaseConfig(
         name="apollo-cm",
         label="Apollo CM",
         preset_fn=apollo_cm,
-        mach=12.0,
-        altitude=30000.0,
+        mach=15.6,
+        altitude=54600.0,
         gamma=1.4,
         mesh_tier=args.tier,
         su2_iterations=args.iterations,
