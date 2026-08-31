@@ -233,7 +233,10 @@ def generate_body_mesh(
         n_bl = mesh_config.n_bl
         ratio = mesh_config.bl_growth_ratio
 
-        # Compute outward normals at each body point
+        # Compute outward normals at each body point.
+        # For axisymmetric half-domain (r >= 0), the outward normal must point
+        # away from the body surface.  We use the left-hand normal of the
+        # tangent vector and verify it points away from the symmetry axis.
         normals = np.empty((n_body, 2))
         for i in range(n_body):
             if i == 0:
@@ -249,7 +252,10 @@ def generate_body_mesh(
             if mag < 1e-15:
                 normals[i] = [0.0, 1.0]
             else:
+                # Left-hand normal of the tangent vector
                 n = np.array([-dr / mag, dx / mag])
+                # Ensure normal points away from symmetry axis (r >= 0 direction)
+                # For r > 0, outward means n_r > 0; for r = 0, n_r > 0
                 if n[1] < 0:
                     n = -n
                 normals[i] = n
@@ -271,7 +277,9 @@ def generate_body_mesh(
                 layer_pts.append(pt)
             bl_nodes.append(layer_pts)
 
-        # --- Create BL quad surfaces ---
+        # --- Create BL triangular surfaces ---
+        # Using triangles instead of quads to avoid high aspect ratio elements
+        # in the thin boundary layer near the wall.
         bl_surfaces: list[int] = []
         for i in range(n_body - 1):
             for k in range(n_bl):
@@ -279,14 +287,22 @@ def generate_body_mesh(
                 br = bl_nodes[i + 1][k]
                 tr = bl_nodes[i + 1][k + 1]
                 tl = bl_nodes[i][k + 1]
-                loop = gmsh.model.geo.addCurveLoop([
+                # Split quad into 2 triangles
+                loop1 = gmsh.model.geo.addCurveLoop([
                     gmsh.model.geo.addLine(bl, br),
                     gmsh.model.geo.addLine(br, tr),
+                    gmsh.model.geo.addLine(tr, bl),
+                ])
+                surf1 = gmsh.model.geo.addPlaneSurface([loop1])
+                bl_surfaces.append(surf1)
+
+                loop2 = gmsh.model.geo.addCurveLoop([
+                    gmsh.model.geo.addLine(bl, tr),
                     gmsh.model.geo.addLine(tr, tl),
                     gmsh.model.geo.addLine(tl, bl),
                 ])
-                surf = gmsh.model.geo.addPlaneSurface([loop])
-                bl_surfaces.append(surf)
+                surf2 = gmsh.model.geo.addPlaneSurface([loop2])
+                bl_surfaces.append(surf2)
 
         # --- Farfield boundary points ---
         bl_ff = gmsh.model.geo.addPoint(x_min, 0.0, 0)

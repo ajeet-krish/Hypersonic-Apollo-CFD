@@ -78,7 +78,7 @@ class MeshConfig:
         """
         if self.first_cell_height is not None and self.first_cell_height > 0:
             return self.first_cell_height
-        return 1e-6 * R_nose
+        return 1e-4 * R_nose
 
     @property
     def total_axial_cells(self) -> int:
