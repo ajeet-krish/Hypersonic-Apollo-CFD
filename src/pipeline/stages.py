@@ -340,7 +340,7 @@ def _run_euler_rans(
     fo_cfl = min(config.su2_cfl, 0.01)
     fo_config = fo_config.with_cfl(fo_cfl)
     fo_config = fo_config.with_cfl_adapt(
-        cfl_min=0.1, cfl_max=2.0, decrease=0.5, increase=100.0,
+        cfl_min=0.005, cfl_max=2.0, decrease=0.5, increase=10.0,
     )
     # Use BCGSTAB linear solver (more robust than FGMRES for hypersonic)
     # and relax linear solver tolerance for initial stability
@@ -377,20 +377,28 @@ def _run_euler_rans(
     shutil.copy2(restart_file, solution_path)
     print(f"  Restart file: {restart_file.name} -> solution.dat")
 
-    # --- Stage 2: Second-order RANS restart ---
-    print(f"\n  === Stage 2: Second-order RANS restart "
+    # --- Stage 2: Continued first-order RANS restart ---
+    # MUSCL second-order diverges at hypersonic Mach numbers due to
+    # oscillations near the bow shock.  Stay first-order with higher CFL
+    # for robust convergence.
+    print(f"\n  === Stage 2: Continued RANS restart "
           f"({config.su2_rans_iterations} iters) ===")
     rans_config = su2_config.with_restart(Path("solution.dat"))
+    rans_config.muscl = False  # Stay first-order for stability
     rans_config.iterations = config.su2_rans_iterations
-    rans_cfl = min(config.su2_cfl, 0.05)
+    # Keep same CFL as stage 1 to avoid restart divergence
+    rans_cfl = min(config.su2_cfl, 0.01)
     rans_config = rans_config.with_cfl(rans_cfl)
     rans_config = rans_config.with_cfl_adapt(
-        cfl_min=0.1, cfl_max=2.0, decrease=0.5, increase=100.0,
+        cfl_min=0.005, cfl_max=1.0, decrease=0.5, increase=3.0,
     )
+    rans_config.linear_solver = "BCGSTAB"
+    rans_config.linear_solver_error = 1e-4
+    rans_config.linear_solver_iter = 40
 
     cfg_path = rans_config.write(su2_dir, mesh_filename=mesh_filename)
     print(f"  Config: {cfg_path}")
-    print(f"  CFL: {rans_cfl}, Second-order: YES, SA with freestream init")
+    print(f"  CFL: {rans_cfl}, First-order: YES, continued from Stage 1")
 
     rans_results = solver.run(cfg_path, su2_dir, timeout=7200)
 
@@ -419,7 +427,7 @@ def _run_mach_ramp(
     ramp_cfl = min(config.su2_cfl, 0.01)
     fo_config = fo_config.with_cfl(ramp_cfl)
     fo_config = fo_config.with_cfl_adapt(
-        cfl_min=0.1, cfl_max=2.0, decrease=0.5, increase=100.0,
+        cfl_min=0.005, cfl_max=2.0, decrease=0.5, increase=10.0,
     )
     fo_config.linear_solver = "BCGSTAB"
     fo_config.linear_solver_error = 1e-2
@@ -438,17 +446,21 @@ def _run_mach_ramp(
         return 1
 
     # --- Stage 2: Second-order RANS at target Mach ---
-    print(f"\n  === Stage 2: Second-order RANS at M={config.mach} (target) ===")
+    print(f"\n  === Stage 2: Continued RANS at M={config.mach} (target) ===")
     import shutil
     shutil.copy2(restart_file, su2_dir / "solution.dat")
 
     target_config = su2_config.with_restart(Path("solution.dat"))
+    target_config.muscl = False  # Stay first-order for stability
     target_config.iterations = config.su2_rans_iterations
-    target_cfl = min(config.su2_cfl, 0.05)
+    target_cfl = min(config.su2_cfl, 0.01)
     target_config = target_config.with_cfl(target_cfl)
     target_config = target_config.with_cfl_adapt(
-        cfl_min=0.1, cfl_max=2.0, decrease=0.5, increase=100.0,
+        cfl_min=0.005, cfl_max=1.0, decrease=0.5, increase=3.0,
     )
+    target_config.linear_solver = "BCGSTAB"
+    target_config.linear_solver_error = 1e-4
+    target_config.linear_solver_iter = 40
 
     cfg_path = target_config.write(su2_dir, mesh_filename=mesh_filename)
     print(f"  Config: {cfg_path}")
