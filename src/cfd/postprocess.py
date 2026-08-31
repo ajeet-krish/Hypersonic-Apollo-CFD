@@ -104,6 +104,12 @@ def measure_shock_standoff(data: VTUData, R_nose: float) -> float:
     The body nose is assumed to be at x=0 (standard for blunt body CFD
     where the nose tip is at the origin).
 
+    To avoid bias from non-uniform node spacing along the stagnation
+    streamline, the density profile is interpolated onto a uniform 1D grid
+    (1000 points) before computing the gradient. The gradient is then
+    computed on the uniform grid using np.gradient, which assumes constant
+    spacing.
+
     Args:
         data: Parsed VTU solution data.
         R_nose: Nose sphere radius (m).
@@ -121,8 +127,6 @@ def measure_shock_standoff(data: VTUData, R_nose: float) -> float:
     r = coords[:, 1] if coords.shape[1] > 1 else np.zeros(len(x))
 
     # Body nose is at x=0 (standard blunt body convention)
-    # For safety, find the minimum positive x among body surface nodes
-    # The shock is upstream (negative x or small positive x)
     x_body_nose = 0.0
 
     # Select nodes along the stagnation streamline (r close to 0)
@@ -144,8 +148,14 @@ def measure_shock_standoff(data: VTUData, R_nose: float) -> float:
     x_line = x_line[order]
     rho_line = rho_line[order]
 
-    # Only look at nodes near the body (within a few nose radii upstream)
-    upstream = (x_line >= x_body_nose - R_nose * 5.0) & (x_line <= x_body_nose + R_nose * 2.0)
+    # Only look at nodes upstream of the body nose (shock is always at x < 0).
+    # Exclude the body surface region where the stagnation-to-wake density
+    # gradient would dominate the shock gradient.
+    upstream = (x_line >= x_body_nose - R_nose * 5.0) & (x_line < x_body_nose)
+
+    if upstream.sum() < 3:
+        # Fallback: include a small buffer past the nose
+        upstream = (x_line >= x_body_nose - R_nose * 5.0) & (x_line <= x_body_nose + R_nose * 0.1)
 
     if upstream.sum() < 3:
         return 0.0
@@ -156,14 +166,24 @@ def measure_shock_standoff(data: VTUData, R_nose: float) -> float:
     if len(x_up) < 3:
         return 0.0
 
-    # Compute density gradient using numpy gradient
-    drho_dx = np.gradient(rho_up, x_up)
+    # Interpolate onto a uniform grid to eliminate non-uniform spacing bias.
+    # np.gradient assumes constant spacing; applying it to non-uniform
+    # node distributions (denser near body/shock) produces spurious gradients.
+    n_uniform = 1000
+    x_uniform = np.linspace(x_up[0], x_up[-1], n_uniform)
+    rho_uniform = np.interp(x_uniform, x_up, rho_up)
+
+    # Compute density gradient on the uniform grid
+    drho_dx = np.gradient(rho_uniform, x_uniform)
 
     # Find maximum density gradient (shock location)
     idx_shock = int(np.argmax(np.abs(drho_dx)))
-    x_shock = float(x_up[idx_shock])
+    x_shock = float(x_uniform[idx_shock])
 
-    delta = x_shock - x_body_nose
+    # Shock standoff: distance from body nose to shock.
+    # The shock is upstream of the body (x_shock < x_body_nose),
+    # so delta = x_body_nose - x_shock (positive value).
+    delta = x_body_nose - x_shock
     return max(delta, 0.0)
 
 
@@ -268,7 +288,7 @@ def build_results_summary(
     Returns:
         Dictionary with all post-processing results.
     """
-    # Stagnation values
+    # Stagnation values (from wall node with max pressure)
     stag = extract_stagnation_values(data)
 
     # Surface profiles
@@ -287,11 +307,20 @@ def build_results_summary(
         profiles["q"], profiles["s"], r_contour,
     )
 
-    # Real-gas correction
+    # Stagnation heat flux: prefer the value from the identified stagnation
+    # wall node (extract_stagnation_values). Fall back to surface profile max
+    # only if the stagnation node has no Heat_Flux data.
     T_stag = stag.get("Temperature", 0.0)
-    q_stag = stag.get("Heat_Flux", 0.0)
-    if (q_stag is None or q_stag == 0.0) and profiles["q"] is not None and len(profiles["q"]) > 0:
+    q_stag = stag.get("Heat_Flux")
+    if q_stag is not None and q_stag > 0.0:
+        # Stagnation node has valid Heat_Flux -- use it directly.
+        pass
+    elif profiles["q"] is not None and len(profiles["q"]) > 0:
+        # Fallback: use the maximum heat flux from the surface profile,
+        # which should be at or near the stagnation point.
         q_stag = float(np.max(profiles["q"]))
+    else:
+        q_stag = 0.0
 
     if T_stag > 0 and q_stag > 0:
         q_corrected, rg_correction = apply_real_gas_correction(q_stag, T_stag)

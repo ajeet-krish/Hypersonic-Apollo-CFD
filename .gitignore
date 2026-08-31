@@ -30,3 +30,6 @@ Thumbs.db
 # Testing
 .pytest_cache/
 .mypy_cache/
+
+# Test-generated images
+docs/assets/images/test/

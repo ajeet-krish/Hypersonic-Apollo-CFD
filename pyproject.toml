@@ -23,3 +23,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/geometry", "src/validation", "src/physics", "src/pipeline", "src/viz", "src/cfd"]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: marks tests as integration tests (require actual SU2 runs)",
+]

@@ -723,11 +723,276 @@ def run_postprocess_stage(config: CaseConfig) -> int:
     return 0 if n_ok == n_plots else 1
 
 
+def run_validation_stage(config: CaseConfig) -> int:
+    """Run triple validation: Sutton-Graves, Billig, Newtonian comparisons.
+
+    Loads postprocess.json, computes freestream from atmosphere, geometry
+    from preset, and runs all three analytical-vs-CFD comparisons.
+
+    Produces:
+        - output/{name}/validation/validation.json: validation report
+        - docs/assets/images/{name}/validation.png: validation bar plot
+
+    Returns:
+        0 on success, 1 on failure.
+    """
+    print(f"\n[{config.label}] Validation stage")
+
+    from validation.compare import build_validation_report, save_validation_report
+
+    # Load postprocess results
+    post_path = Path(config.output_dir) / "postprocess" / "postprocess.json"
+    if not post_path.exists():
+        print(f"  ERROR: postprocess.json not found at {post_path}. Run postprocess first.")
+        return 1
+
+    with open(post_path) as f:
+        su2_results = json.load(f)
+
+    # Compute freestream conditions
+    atm = standard_atmosphere(config.altitude)
+    V_inf = atm.speed_of_sound * config.mach
+    freestream = {
+        "M": config.mach,
+        "rho_inf": atm.density,
+        "V_inf": V_inf,
+        "altitude": config.altitude,
+        "temperature": atm.temperature,
+        "pressure": atm.pressure,
+    }
+
+    # Compute geometry parameters
+    body_config = config.preset_fn()
+    geometry = {
+        "R_nose": body_config.R_nose,
+        "half_angle": body_config.half_angle,
+        "base_radius": body_config.base_radius,
+    }
+
+    # Build validation report
+    report = build_validation_report(su2_results, freestream, geometry)
+
+    # Save validation JSON
+    val_dir = Path(config.output_dir) / "validation"
+    val_dir.mkdir(parents=True, exist_ok=True)
+    save_validation_report(report, val_dir / "validation.json")
+    print(f"  Report: {val_dir / 'validation.json'}")
+
+    # Generate validation bar plot
+    images_dir = Path(config.images_dir)
+    images_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        from viz.validation import plot_validation_bars
+        plot_path = plot_validation_bars(report, images_dir / "validation.png")
+        print(f"  Plot: {plot_path}")
+    except (OSError, RuntimeError) as exc:
+        print(f"  Validation plot FAILED: {exc}")
+
+    # Print summary
+    print("\n  --- Validation Summary ---")
+    for entry in report["summary_table"]:
+        status_mark = "PASS" if entry["status"] == "PASS" else "FAIL"
+        print(f"  {entry['quantity']:30s}  SU2={entry['su2']:>12s}  "
+              f"Analytical={entry['analytical']:>12s}  "
+              f"Error={entry['error_pct']:>6s}  [{status_mark}]")
+
+    overall = "ALL PASSED" if report["all_pass"] else "SOME FAILED"
+    print(f"\n  Overall: {overall}")
+
+    return 0 if report["all_pass"] else 1
+
+
+def run_gci_stage(config: CaseConfig) -> int:
+    """Run GCI mesh convergence study on three tiers.
+
+    Runs the reference case on draft, standard, and high tiers using
+    the euler-rans strategy, computes GCI for stagnation heat flux
+    and shock standoff.
+
+    Produces:
+        - output/{name}/gci/gci.json: GCI results
+        - docs/assets/images/{name}/gci_convergence.png: GCI plot
+
+    Returns:
+        0 on success, 1 on failure.
+    """
+    print(f"\n[{config.label}] GCI stage")
+
+    from validation.gci import run_gci_study
+
+    gci_results = run_gci_study(
+        config,
+        quantities=["stagnation_heat_flux", "shock_standoff"],
+    )
+
+    if "error" in gci_results:
+        print(f"  ERROR: {gci_results['error']}")
+        return 1
+
+    # Save GCI JSON
+    gci_dir = Path(config.output_dir) / "gci"
+    gci_dir.mkdir(parents=True, exist_ok=True)
+    gci_path = gci_dir / "gci.json"
+    with open(gci_path, "w") as f:
+        json.dump(gci_results, f, indent=2)
+    print(f"  Results: {gci_path}")
+
+    # Generate GCI convergence plots
+    images_dir = Path(config.images_dir)
+    images_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        from viz.validation import plot_gci_convergence
+        for qty_name, qty_data in gci_results.items():
+            plot_path = plot_gci_convergence(
+                qty_data, images_dir / f"gci_{qty_name}.png",
+            )
+            print(f"  Plot: {plot_path}")
+    except (OSError, RuntimeError) as exc:
+        print(f"  GCI plot FAILED: {exc}")
+
+    # Print summary
+    print("\n  --- GCI Summary ---")
+    for qty_name, qty_data in gci_results.items():
+        print(f"  {qty_data['quantity']}:")
+        print(f"    Order of accuracy: {qty_data['apparent_order']:.2f}")
+        print(f"    Extrapolated value: {qty_data['extrapolated_value']:.6f}")
+        print(f"    GCI (fine): {qty_data['gci_fine_pct']:.2f}%")
+        print(f"    Asymptotic ratio: {qty_data['asymptotic_ratio']:.2f}")
+        print(f"    Monotonic: {qty_data['monotonic']}")
+        print(f"    Status: {'PASSED' if qty_data['passed'] else 'FAILED'}")
+
+    all_pass = all(q["passed"] for q in gci_results.values())
+    return 0 if all_pass else 1
+
+
+def run_apollo_stage(config: CaseConfig) -> int:
+    """Run the Apollo CM headline case: mach-ramp M=5 -> M=12, then compare to flight data.
+
+    Executes the full Apollo CM pipeline:
+        1. Geometry (Apollo preset: R_nose=0.196m, 50-deg cone, base R=1.955m)
+        2. Mesh (standard tier)
+        3. SU2 (mach-ramp strategy: M=5 first-order, then M=12 second-order)
+        4. Post-process (heat flux, contours, shock standoff)
+        5. Validate (Sutton-Graves, Billig, Newtonian)
+        6. Flight data comparison (Apollo 4/6/11 data)
+
+    Produces:
+        - output/apollo-cm/apollo_results.json: combined results
+        - docs/assets/images/apollo-cm/flight_data_comparison.png
+
+    Args:
+        config: Case configuration (must use apollo_cm preset).
+
+    Returns:
+        0 on success, 1 on failure.
+    """
+    print(f"\n{'='*60}")
+    print("  APOLLO CM HEADLINE CASE")
+    print(f"  Mach {config.mach} at {config.altitude/1000:.0f} km altitude")
+    print(f"  Strategy: mach-ramp M={config.su2_mach_ramp_start} -> M={config.mach}")
+    print(f"{'='*60}")
+
+    from validation.flight_data import compare_to_flight_data
+    from viz.flight_data import plot_flight_data_comparison
+
+    # Step 1: Geometry
+    geo_result = run_geometry_stage(config)
+    if geo_result != 0:
+        print("  ERROR: Geometry stage failed.")
+        return 1
+
+    # Step 2: Mesh
+    mesh_result = run_mesh_stage(config)
+    if mesh_result != 0:
+        print("  ERROR: Mesh stage failed.")
+        return 1
+
+    # Step 3: SU2 (mach-ramp)
+    su2_result = run_su2_stage(config)
+    if su2_result != 0:
+        print("  WARNING: SU2 did not fully converge. Continuing with partial results.")
+
+    # Step 4: Post-process
+    post_result = run_postprocess_stage(config)
+    if post_result != 0:
+        print("  WARNING: Post-processing had issues. Continuing with available data.")
+
+    # Step 5: Validate
+    run_validation_stage(config)
+
+    # Step 6: Flight data comparison
+    print(f"\n[{config.label}] Flight data comparison stage")
+
+    # Load postprocess results for SU2 heat flux
+    post_path = Path(config.output_dir) / "postprocess" / "postprocess.json"
+    su2_q_stag = 0.0
+    if post_path.exists():
+        with open(post_path) as f:
+            post_data = json.load(f)
+        su2_q_stag = post_data.get("stagnation", {}).get("heat_flux_W_m2", 0.0)
+
+    # Build conditions dict
+    su2_conditions = {
+        "mach": config.mach,
+        "altitude_m": config.altitude,
+        "R_nose": config.preset_fn().R_nose,
+    }
+
+    # Run flight data comparison
+    comparison = compare_to_flight_data(su2_q_stag, su2_conditions)
+
+    # Save Apollo results JSON
+    apollo_results = {
+        "case": config.name,
+        "mach": config.mach,
+        "altitude_m": config.altitude,
+        "strategy": config.su2_strategy,
+        "flight_data_comparison": comparison,
+        "su2_stagnation": {
+            "heat_flux_W_m2": su2_q_stag,
+            "heat_flux_W_cm2": round(su2_q_stag / 10000.0, 2),
+        },
+    }
+
+    apollo_dir = Path(config.output_dir)
+    apollo_dir.mkdir(parents=True, exist_ok=True)
+    apollo_path = apollo_dir / "apollo_results.json"
+    with open(apollo_path, "w") as f:
+        json.dump(apollo_results, f, indent=2)
+    print(f"  Apollo results: {apollo_path}")
+
+    # Generate flight data comparison plot
+    images_dir = Path(config.images_dir)
+    images_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        plot_path = plot_flight_data_comparison(
+            su2_q_stag, su2_conditions, images_dir / "flight_data_comparison.png",
+        )
+        print(f"  Flight data plot: {plot_path}")
+    except (OSError, RuntimeError) as exc:
+        print(f"  Flight data plot FAILED: {exc}")
+
+    # Print summary
+    print("\n  --- Apollo CM Summary ---")
+    print(f"  Mach: {config.mach}, Altitude: {config.altitude/1000:.0f} km")
+    print(f"  SU2 stagnation heat flux: {su2_q_stag/10000:.1f} W/cm^2")
+    print(f"  Strategy: {config.su2_strategy}")
+    print(f"  Flight data comparison: {comparison['summary']}")
+    print(f"  Caveats: {len(comparison['caveats'])} noted")
+
+    return 0
+
+
 STAGE_FUNCTIONS: dict[PipelineStage, Callable[[CaseConfig], int]] = {
     PipelineStage.GEOMETRY: run_geometry_stage,
     PipelineStage.MESH: run_mesh_stage,
     PipelineStage.SU2: run_su2_stage,
     PipelineStage.POSTPROCESS: run_postprocess_stage,
+    PipelineStage.VALIDATION: run_validation_stage,
+    PipelineStage.GCI: run_gci_stage,
+    PipelineStage.APOLLO: run_apollo_stage,
 }
 
 

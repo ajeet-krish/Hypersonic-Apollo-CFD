@@ -100,7 +100,7 @@ class SU2HypersonicConfig:
 
     # Output
     output_files: tuple[str, ...] = field(
-        default_factory=lambda: ("RESTART", "PARAVIEW"),
+        default_factory=lambda: ("RESTART", "PARAVIEW", "SURFACE_CSV"),
     )
     history_output: tuple[str, ...] = field(
         default_factory=lambda: ("ITER", "RMS_RES", "LIFT", "DRAG"),
@@ -229,6 +229,7 @@ REF_LENGTH= {self.ref_length}
 SCREEN_OUTPUT= (INNER_ITER, RMS_DENSITY, LIFT, DRAG)
 OUTPUT_FILES= ( {output_files_str} )
 VOLUME_FILENAME= flow
+SURFACE_FILENAME= surface_flow
 HISTORY_OUTPUT= ( {history_output_str} )
 
 % -------------------- MESH ------------------------------------

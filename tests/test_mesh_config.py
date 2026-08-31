@@ -10,7 +10,7 @@ class TestMeshConfigDefaults:
     def test_default_values(self):
         """Verify default configuration values."""
         config = MeshConfig()
-        assert config.n_bl == 30
+        assert config.n_bl == 50
         assert config.first_cell_height is None
         assert config.bl_growth_ratio == 1.10
         assert config.n_axial_nose == 60
@@ -35,7 +35,7 @@ class TestMeshConfigForTier:
         """Draft tier should have roughly half the cells of standard."""
         config = MeshConfig.for_tier("draft")
         assert config.mesh_tier == "draft"
-        assert config.n_bl == 15
+        assert config.n_bl == 25
         assert config.n_axial_nose == 30
         assert config.n_axial_cone == 40
         assert config.n_radial == 40
@@ -44,7 +44,7 @@ class TestMeshConfigForTier:
         """Standard tier should use default cell counts."""
         config = MeshConfig.for_tier("standard")
         assert config.mesh_tier == "standard"
-        assert config.n_bl == 30
+        assert config.n_bl == 50
         assert config.n_axial_nose == 60
         assert config.n_axial_cone == 80
         assert config.n_radial == 80
@@ -53,7 +53,7 @@ class TestMeshConfigForTier:
         """High tier should have roughly double the cells of standard."""
         config = MeshConfig.for_tier("high")
         assert config.mesh_tier == "high"
-        assert config.n_bl == 60
+        assert config.n_bl == 100
         assert config.n_axial_nose == 120
         assert config.n_axial_cone == 160
         assert config.n_radial == 160
@@ -93,10 +93,10 @@ class TestMeshConfigResolveFirstCellHeight:
     """Tests for resolve_first_cell_height method."""
 
     def test_auto_height(self):
-        """When first_cell_height is None, should return 1e-5 * R_nose."""
+        """When first_cell_height is None, should return 1e-3 * R_nose."""
         config = MeshConfig()
         result = config.resolve_first_cell_height(0.1)
-        assert result == pytest.approx(1e-6)
+        assert result == pytest.approx(1e-4)
 
     def test_explicit_height(self):
         """When first_cell_height is set, should return it directly."""
@@ -108,7 +108,7 @@ class TestMeshConfigResolveFirstCellHeight:
         """Auto height for Apollo CM R_nose = 0.196 m."""
         config = MeshConfig()
         result = config.resolve_first_cell_height(0.196)
-        assert result == pytest.approx(1.96e-6)
+        assert result == pytest.approx(1.96e-4)
 
 
 class TestMeshConfigValidation:

@@ -77,10 +77,11 @@ class TestSU2HypersonicConfigDefaults:
         assert config.gas_constant == 287.058
 
     def test_default_output_files(self):
-        """Default output files should include RESTART and PARAVIEW."""
+        """Default output files should include RESTART, PARAVIEW, and SURFACE_CSV."""
         config = SU2HypersonicConfig()
         assert "RESTART" in config.output_files
         assert "PARAVIEW" in config.output_files
+        assert "SURFACE_CSV" in config.output_files
 
     def test_default_turbulence_intensity(self):
         """Default turbulence intensity should be 0.05."""
@@ -234,7 +235,7 @@ class TestSU2HypersonicConfigWrite:
         config = SU2HypersonicConfig()
         cfg_path = config.write(tmp_path)
         content = cfg_path.read_text()
-        assert "OUTPUT_FILES= ( RESTART, PARAVIEW )" in content
+        assert "OUTPUT_FILES= ( RESTART, PARAVIEW, SURFACE_CSV )" in content
 
     def test_cfg_history_output(self, tmp_path: Path):
         """History output fields should be present."""
@@ -520,7 +521,8 @@ class TestCfgFileIntegrity:
                     continue
                 if key.strip() in ("SCREEN_OUTPUT", "OUTPUT_FILES",
                                     "HISTORY_OUTPUT", "MESH_FILENAME",
-                                    "VOLUME_FILENAME", "HISTORY_FILENAME"):
+                                    "VOLUME_FILENAME", "HISTORY_FILENAME",
+                                    "SURFACE_FILENAME"):
                     continue
                 # Should be parseable as float
                 try:

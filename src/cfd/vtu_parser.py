@@ -218,7 +218,16 @@ def _parse_vtu_appended(vtu_path: Path) -> VTUData:
 
 
 def extract_stagnation_values(data: VTUData) -> dict[str, float]:
-    """Find the stagnation point (max pressure) and return flow properties.
+    """Find the stagnation point on the body wall and return flow properties.
+
+    The stagnation point is the wall node with maximum static pressure.
+    Wall nodes are identified by having Heat_Flux > 0 (SU2 writes wall
+    heat flux only at boundary nodes with MARKER_ISOTHERMAL) or Y_Plus > 0.
+
+    Previous implementation used np.argmax(data.pressure) on ALL nodes,
+    which incorrectly selected a node in the shock layer (post-shock gas)
+    with zero Heat_Flux. The shock layer has higher static pressure than
+    the wall but is NOT on the body surface.
 
     Args:
         data: Parsed VTU data.
@@ -230,8 +239,31 @@ def extract_stagnation_values(data: VTUData) -> dict[str, float]:
     if data.pressure is None:
         return {}
 
-    # Stagnation point = node with maximum static pressure
-    idx = int(np.argmax(data.pressure))
+    # Identify wall boundary nodes: they have non-zero Heat_Flux or Y_Plus.
+    # In SU2 RANS with MARKER_ISOTHERMAL, Heat_Flux is written only at wall
+    # boundary nodes in the volume VTU. Interior nodes have Heat_Flux = 0.
+    heat_flux = data.point_data.get("Heat_Flux")
+    yplus = data.point_data.get("Y_Plus")
+
+    wall_mask: np.ndarray | None = None
+    if heat_flux is not None:
+        wall_mask = heat_flux > 0.0
+    if wall_mask is None or not wall_mask.any():
+        if yplus is not None:
+            wall_mask = yplus > 0.0
+
+    if wall_mask is not None and wall_mask.any():
+        # Among wall nodes, find the one with maximum pressure (stagnation point).
+        # At the stagnation point, the flow is subsonic and pressure is highest
+        # on the body surface.
+        masked_pressure = data.pressure.copy()
+        masked_pressure[~wall_mask] = -np.inf
+        idx = int(np.argmax(masked_pressure))
+    else:
+        # Fallback: no wall nodes identified, use global max pressure.
+        # This handles test VTUs and cases without wall-specific fields.
+        idx = int(np.argmax(data.pressure))
+
     result: dict[str, float] = {}
 
     result["Pressure"] = float(data.pressure[idx])
@@ -244,13 +276,16 @@ def extract_stagnation_values(data: VTUData) -> dict[str, float]:
         result["Mach"] = float(data.mach[idx])
 
     # Extract Heat_Flux at the stagnation point
-    heat_flux = data.point_data.get("Heat_Flux")
     if heat_flux is not None:
         result["Heat_Flux"] = float(heat_flux[idx])
 
     # Store stagnation coordinates
     result["x"] = float(data.coordinates[idx, 0])
     result["r"] = float(data.coordinates[idx, 1]) if data.coordinates.shape[1] > 1 else 0.0
+
+    # Count wall nodes found (diagnostic)
+    if wall_mask is not None:
+        result["n_wall_nodes"] = int(wall_mask.sum())
 
     return result
 

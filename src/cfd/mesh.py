@@ -1,17 +1,25 @@
 """Gmsh shock-aligned mesh generation for spherically-blunted cones.
 
 Produces a 2D axisymmetric mesh in the (x, r) plane with:
-  - Boundary-layer refinement at the body wall (Gmsh BoundaryLayer field)
+  - Structured boundary-layer cells at the body wall (manual quad layers)
   - Shock-region refinement based on Billig standoff correlation
   - Sphere-cone junction refinement
   - Farfield boundary at configurable distance
   - SU2-compatible physical group markers
+
+The boundary layer is built by explicit node placement: for each body
+contour point, additional nodes are placed along the outward normal at
+geometrically-spaced distances.  Quads connect consecutive layers.
+This bypasses the gmsh BoundaryLayer field and transfinite surface,
+both of which are non-functional in gmsh 4.15.2.
 
 References:
     Billig, F. S. (1967), "Shock-Wave Shapes Around Unswept- and
     Swept-Nose Bodies," J. Spacecraft & Rockets, 4(6), 822-823.
 """
 from pathlib import Path
+
+import numpy as np
 
 from geometry.blunt_body import generate_contour
 from geometry.config import BluntBodyConfig
@@ -53,57 +61,55 @@ def _build_domain_points(
     return x_min, x_max, r_max
 
 
-def _add_boundary_layer(
-    body_curve_tags: list[int],
-    surface_tag: int,
-    mesh_config: MeshConfig,
-    R_nose: float,
-    bl_field_tag: int,
-) -> None:
-    """Add Gmsh BoundaryLayer field for wall-normal refinement.
+def _compute_offset_contour(
+    x_body: np.ndarray,
+    r_body: np.ndarray,
+    bl_thickness: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Compute offset contour for the boundary-layer outer boundary.
 
-    Uses the BoundaryLayer field with geometric spacing to produce
-    first_cell_height at the wall with bl_growth_ratio progression.
-
-    The total boundary layer thickness is computed from the desired
-    first cell height, number of layers, and growth ratio:
-        Thickness = h1 * (1 - ratio^N) / (1 - ratio)
+    Offsets each body contour point outward along the surface normal
+    by *bl_thickness*.  The outward normal is the left-hand normal of
+    the body curve (which points away from the symmetry axis for a
+    left-to-right oriented contour).
 
     Args:
-        body_curve_tags: Tags of the body wall curves.
-        surface_tag: Gmsh surface tag (for recombine to quads).
-        mesh_config: Mesh configuration.
-        R_nose: Nose sphere radius (m).
-        bl_field_tag: Field ID for the boundary layer.
+        x_body: Axial coordinates of the body contour (m).
+        r_body: Radial coordinates of the body contour (m).
+        bl_thickness: Total boundary-layer thickness (m).
+
+    Returns:
+        (x_offset, r_offset) arrays of the same shape as the inputs.
     """
-    import gmsh
+    n_pts = len(x_body)
+    x_off = np.empty(n_pts)
+    r_off = np.empty(n_pts)
 
-    first_h = mesh_config.resolve_first_cell_height(R_nose)
-    n_layers = mesh_config.n_bl
-    ratio = mesh_config.bl_growth_ratio
+    for i in range(n_pts):
+        if i == 0:
+            dx = x_body[1] - x_body[0]
+            dr = r_body[1] - r_body[0]
+        elif i == n_pts - 1:
+            dx = x_body[-1] - x_body[-2]
+            dr = r_body[-1] - r_body[-2]
+        else:
+            dx = x_body[i + 1] - x_body[i - 1]
+            dr = r_body[i + 1] - r_body[i - 1]
 
-    # Compute total BL thickness from geometric series:
-    # Thickness = h1 * (1 - ratio^N) / (1 - ratio)
-    if abs(ratio - 1.0) < 1e-10:
-        thickness = first_h * n_layers
-    else:
-        thickness = first_h * (1.0 - ratio**n_layers) / (1.0 - ratio)
+        mag = np.hypot(dx, dr)
+        if mag < 1e-15:
+            nx, nr = 0.0, 1.0
+        else:
+            nx = -dr / mag
+            nr = dx / mag
 
-    gmsh.model.mesh.field.add("BoundaryLayer", bl_field_tag)
-    gmsh.model.mesh.field.setNumbers(
-        bl_field_tag, "CurvesList", body_curve_tags,
-    )
-    gmsh.model.mesh.field.setNumber(bl_field_tag, "Quads", 1)
-    gmsh.model.mesh.field.setNumber(bl_field_tag, "NbLayers", n_layers)
-    gmsh.model.mesh.field.setNumber(bl_field_tag, "Thickness", thickness)
-    gmsh.model.mesh.field.setNumber(bl_field_tag, "ratio", ratio)
+        if nr < 0.0:
+            nx, nr = -nx, -nr
 
-    # Enable quad elements in the BL region
-    gmsh.model.geo.mesh.setRecombine(2, surface_tag)
+        x_off[i] = x_body[i] + nx * bl_thickness
+        r_off[i] = r_body[i] + nr * bl_thickness
 
-    # Allow high anisotropy in the BL (no fan element limit)
-    gmsh.option.setNumber("Mesh.BoundaryLayerFanElements", 0)
-    gmsh.option.setNumber("Mesh.AnisoMax", 1e6)
+    return x_off, r_off
 
 
 def _add_shock_refinement(
@@ -132,7 +138,6 @@ def _add_shock_refinement(
     delta = standoff.delta
     R_nose = config.R_nose
 
-    # Ball field: refined zone around the shock standoff region.
     ball_tag = field_tag
     gmsh.model.mesh.field.add("Ball", ball_tag)
     gmsh.model.mesh.field.setNumber(ball_tag, "XCenter", delta)
@@ -152,9 +157,6 @@ def _add_junction_refinement(
     tier_mult: float = 1.0,
 ) -> None:
     """Add refinement near the sphere-cone junction using a Ball field.
-
-    The junction where the spherical nose meets the conical frustum
-    requires smaller cells to capture the geometric curvature change.
 
     Args:
         config: Blunt body geometry parameters.
@@ -187,11 +189,14 @@ def generate_body_mesh(
         - Body contour (sphere + cone) from Phase 1 geometry
         - Farfield boundary at configurable distance
         - Symmetry axis along r=0
-        - Boundary-layer refinement at the body wall
+        - Structured boundary-layer cells at the body wall
         - Shock-region refinement from Billig correlation
         - Sphere-cone junction refinement
 
-    The mesh is exported as an SU2-compatible .su2 file.
+    The boundary layer is built by placing BL nodes at explicit positions
+    along the outward normal from each body contour point.  Each axial
+    segment gets a column of quad elements with geometric growth from
+    the wall.  This guarantees the requested first cell height.
 
     Args:
         config: Blunt body geometry configuration.
@@ -218,94 +223,175 @@ def generate_body_mesh(
         # --- Body contour ---
         x_body, r_body = generate_contour(config)
         R_nose = config.R_nose
+        n_body = len(x_body)
 
         # --- Farfield bounds ---
         x_min, x_max, r_max = _build_domain_points(config, mesh_config)
 
-        # --- Create body wall points and spline ---
-        body_pts: list[int] = []
-        for i in range(len(x_body)):
-            pt = gmsh.model.geo.addPoint(float(x_body[i]), float(r_body[i]), 0)
-            body_pts.append(pt)
-        body_spline = gmsh.model.geo.addSpline(body_pts)
+        # --- Boundary layer geometry ---
+        first_h = mesh_config.resolve_first_cell_height(R_nose)
+        n_bl = mesh_config.n_bl
+        ratio = mesh_config.bl_growth_ratio
+
+        # Compute outward normals at each body point
+        normals = np.empty((n_body, 2))
+        for i in range(n_body):
+            if i == 0:
+                dx = x_body[1] - x_body[0]
+                dr = r_body[1] - r_body[0]
+            elif i == n_body - 1:
+                dx = x_body[-1] - x_body[-2]
+                dr = r_body[-1] - r_body[-2]
+            else:
+                dx = x_body[i + 1] - x_body[i - 1]
+                dr = r_body[i + 1] - r_body[i - 1]
+            mag = np.hypot(dx, dr)
+            if mag < 1e-15:
+                normals[i] = [0.0, 1.0]
+            else:
+                n = np.array([-dr / mag, dx / mag])
+                if n[1] < 0:
+                    n = -n
+                normals[i] = n
+
+        # --- Create BL layer points ---
+        # bl_nodes[i][k] = gmsh point tag for body point i, BL layer k
+        # k=0 is the body surface, k=n_bl is the offset (BL outer edge)
+        bl_nodes: list[list[int]] = []
+        cumulative_h = np.zeros(n_bl + 1)
+        for k in range(1, n_bl + 1):
+            cumulative_h[k] = cumulative_h[k - 1] + first_h * ratio ** (k - 1)
+
+        for i in range(n_body):
+            layer_pts: list[int] = []
+            for k in range(n_bl + 1):
+                x = x_body[i] + normals[i, 0] * cumulative_h[k]
+                r = r_body[i] + normals[i, 1] * cumulative_h[k]
+                pt = gmsh.model.geo.addPoint(float(x), float(r), 0)
+                layer_pts.append(pt)
+            bl_nodes.append(layer_pts)
+
+        # --- Create BL quad surfaces ---
+        bl_surfaces: list[int] = []
+        for i in range(n_body - 1):
+            for k in range(n_bl):
+                bl = bl_nodes[i][k]
+                br = bl_nodes[i + 1][k]
+                tr = bl_nodes[i + 1][k + 1]
+                tl = bl_nodes[i][k + 1]
+                loop = gmsh.model.geo.addCurveLoop([
+                    gmsh.model.geo.addLine(bl, br),
+                    gmsh.model.geo.addLine(br, tr),
+                    gmsh.model.geo.addLine(tr, tl),
+                    gmsh.model.geo.addLine(tl, bl),
+                ])
+                surf = gmsh.model.geo.addPlaneSurface([loop])
+                bl_surfaces.append(surf)
 
         # --- Farfield boundary points ---
-        bl = gmsh.model.geo.addPoint(x_min, 0.0, 0)
+        bl_ff = gmsh.model.geo.addPoint(x_min, 0.0, 0)
         tl = gmsh.model.geo.addPoint(x_min, r_max, 0)
         tr = gmsh.model.geo.addPoint(x_max, r_max, 0)
         br = gmsh.model.geo.addPoint(x_max, 0.0, 0)
 
-        # --- Boundary curves ---
-        upstream_line = gmsh.model.geo.addLine(bl, body_pts[0])
-        downstream_line = gmsh.model.geo.addLine(body_pts[-1], br)
+        # --- Outer domain: offset contour to farfield ---
+        # Use the top row of BL nodes (layer n_bl) as the inner boundary
+        outer_inner_pts = [bl_nodes[i][n_bl] for i in range(n_body)]
+
+        # Upstream line: from farfield left to body nose (on the axis)
+        upstream_line = gmsh.model.geo.addLine(bl_ff, bl_nodes[0][0])
+
+        # Downstream line: from body tail (on the axis) to farfield right
+        downstream_line = gmsh.model.geo.addLine(bl_nodes[-1][0], br)
+
+        # Farfield boundary curves
         far_top = gmsh.model.geo.addLine(tr, tl)
-        far_left = gmsh.model.geo.addLine(bl, tl)
+        far_left = gmsh.model.geo.addLine(bl_ff, tl)
         far_right = gmsh.model.geo.addLine(br, tr)
 
-        # --- Surface loop and surface ---
-        surface_loop = gmsh.model.geo.addCurveLoop([
-            upstream_line,      # bl -> body_pts[0]
-            body_spline,        # body_pts[0] -> body_pts[-1]
-            downstream_line,    # body_pts[-1] -> br
-            far_right,          # br -> tr
-            far_top,            # tr -> tl
-            -far_left,          # tl -> bl  (reverse of bl -> tl)
+        # Outer domain surface: complex boundary
+        # For the outer domain, create a single surface with the offset
+        # contour as the inner boundary and farfield as the outer boundary.
+        # We'll create the outer surface as a single large surface.
+        # The offset contour is the inner boundary (top of BL).
+        # The farfield is the outer boundary.
+
+        # Offset spline from BL top nodes
+        offset_spline = gmsh.model.geo.addSpline(outer_inner_pts)
+
+        # Outer surface loop
+        outer_loop = gmsh.model.geo.addCurveLoop([
+            upstream_line,       # farfield left -> body nose (axis)
+            gmsh.model.geo.addLine(bl_nodes[0][0], outer_inner_pts[0]),
+            offset_spline,       # along the offset contour
+            gmsh.model.geo.addLine(outer_inner_pts[-1], bl_nodes[-1][0]),
+            downstream_line,     # body tail (axis) -> farfield right
+            far_right,           # farfield right side
+            far_top,             # farfield top
+            -far_left,           # farfield left side (reversed)
         ])
-        surface = gmsh.model.geo.addPlaneSurface([surface_loop])
+        outer_surface = gmsh.model.geo.addPlaneSurface([outer_loop])
 
         # --- Physical groups (SU2 markers) ---
-        gmsh.model.geo.addPhysicalGroup(1, [body_spline], name="body")
+        # Body marker: all bottom curves of BL (body surface)
+        body_curves = []
+        for i in range(n_body - 1):
+            body_curves.append(
+                gmsh.model.geo.addLine(bl_nodes[i][0], bl_nodes[i + 1][0])
+            )
+        gmsh.model.geo.addPhysicalGroup(1, body_curves, name="body")
+
+        # Farfield marker
         gmsh.model.geo.addPhysicalGroup(
             1, [far_left, far_top, far_right, downstream_line],
             name="farfield",
         )
-        # Symmetry axis at r=0: upstream_line goes from farfield left
-        # (r=0) to body nose tip (r=0) and IS in the surface loop.
-        # The old axis_line (br->bl) was NOT in the surface loop and
-        # produced invalid node IDs (-1) in the SU2 mesh export.
-        gmsh.model.geo.addPhysicalGroup(1, [upstream_line], name="sym")
-        gmsh.model.geo.addPhysicalGroup(2, [surface], name="fluid")
 
-        # --- Synchronize geometry before setting up mesh fields ---
+        # Symmetry axis: upstream line
+        gmsh.model.geo.addPhysicalGroup(1, [upstream_line], name="sym")
+
+        # Fluid domain: BL surfaces + outer surface
+        gmsh.model.geo.addPhysicalGroup(
+            2, bl_surfaces + [outer_surface], name="fluid",
+        )
+
+        # --- Synchronize geometry ---
         gmsh.model.geo.synchronize()
 
-        # --- Tier-based mesh size multiplier ---
-        # draft=2.0 (coarser, fewer cells), standard=1.0, high=0.5 (finer, more)
+        # ============================================================
+        #  SIZE FIELDS FOR THE OUTER SURFACE
+        # ============================================================
         tier_mult = _TIER_SIZE_MULTIPLIERS[mesh_config.mesh_tier]
-        first_h = mesh_config.resolve_first_cell_height(R_nose)
-
-        # --- Global mesh size constraints ---
-        # CharacteristicLengthMin must be smaller than the BL first cell
-        # height so gmsh does not clamp BL element sizes to the global min.
         body_length = config.computed_body_length
-        gmsh.option.setNumber("Mesh.CharacteristicLengthMin", 0.5 * first_h)
-        gmsh.option.setNumber("Mesh.CharacteristicLengthMax", 2.0 * body_length * tier_mult)
 
-        # --- Background mesh (base cell size, scaled by tier) ---
+        gmsh.option.setNumber(
+            "Mesh.CharacteristicLengthMin", 0.1 * R_nose * tier_mult,
+        )
+        gmsh.option.setNumber(
+            "Mesh.CharacteristicLengthMax", 2.0 * body_length * tier_mult,
+        )
+
+        # Background mesh (base cell size, scaled by tier)
         bg_tag = 100
         gmsh.model.mesh.field.add("Constant", bg_tag)
         bg_vin = 0.2 * body_length * tier_mult
         gmsh.model.mesh.field.setNumber(bg_tag, "VIn", bg_vin)
         gmsh.model.mesh.field.setNumber(bg_tag, "VOut", bg_vin)
 
-        # --- Boundary layer refinement ---
-        bl_tag = 200
-        _add_boundary_layer([body_spline], surface, mesh_config, R_nose, bl_tag)
-
-        # --- Shock refinement ---
+        # Shock refinement
         shock_tag = 300
         if mesh_config.shock_refinement:
             _add_shock_refinement(
                 config, mach, mesh_config, shock_tag, tier_mult,
             )
 
-        # --- Junction refinement ---
+        # Junction refinement
         junc_tag = 400
         _add_junction_refinement(config, mesh_config, junc_tag, tier_mult)
 
-        # --- Combine fields with Min ---
+        # Combine fields with Min
         min_tag = 999
-        field_ids = [bg_tag, bl_tag]
+        field_ids: list[int] = [bg_tag]
         if mesh_config.shock_refinement:
             field_ids.append(shock_tag)
         field_ids.append(junc_tag)
@@ -314,7 +400,9 @@ def generate_body_mesh(
         gmsh.model.mesh.field.setNumbers(min_tag, "FieldsList", field_ids)
         gmsh.model.mesh.field.setAsBackgroundMesh(min_tag)
 
-        # --- Generate mesh ---
+        # ============================================================
+        #  MESH GENERATION
+        # ============================================================
         gmsh.option.setNumber("Mesh.Algorithm", 8)  # Frontal-Delaunay
         gmsh.option.setNumber("Mesh.Smoothing", 10)
         gmsh.model.mesh.generate(2)

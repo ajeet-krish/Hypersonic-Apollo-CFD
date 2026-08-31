@@ -16,6 +16,7 @@ class PipelineStage(Enum):
     GCI = "gci"
     SWEEP = "sweep"
     SITE = "site"
+    APOLLO = "apollo"
 
 
 @dataclass(frozen=True)

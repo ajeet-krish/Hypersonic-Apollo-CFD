@@ -26,7 +26,7 @@ class MeshConfig:
         mesh_tier: Refinement tier (draft, standard, high).
     """
 
-    n_bl: int = 30
+    n_bl: int = 50
     first_cell_height: float | None = None
     bl_growth_ratio: float = 1.10
     n_axial_nose: int = 60
@@ -65,7 +65,7 @@ class MeshConfig:
             )
 
     def resolve_first_cell_height(self, R_nose: float) -> float:
-        """Return effective first cell height, falling back to 1e-5 * R_nose.
+        """Return effective first cell height, falling back to 1e-3 * R_nose.
 
         Args:
             R_nose: Nose sphere radius (m).
@@ -75,7 +75,7 @@ class MeshConfig:
         """
         if self.first_cell_height is not None and self.first_cell_height > 0:
             return self.first_cell_height
-        return 1e-5 * R_nose
+        return 1e-3 * R_nose
 
     @property
     def total_axial_cells(self) -> int:
@@ -116,7 +116,7 @@ class MeshConfig:
         mult = _TIER_MULTIPLIERS[tier]
 
         config = cls(
-            n_bl=max(10, int(30 * mult)),
+            n_bl=max(10, int(50 * mult)),
             first_cell_height=overrides.pop("first_cell_height", None),
             bl_growth_ratio=float(overrides.pop("bl_growth_ratio", 1.10)),
             n_axial_nose=max(10, int(60 * mult)),

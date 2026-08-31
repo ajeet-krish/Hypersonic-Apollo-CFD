@@ -185,11 +185,15 @@ def plot_shock_standoff_measurement(
     # Find body nose (minimum x)
     x_body_nose = float(x.min())
 
-    # Find shock location (max density gradient)
+    # Find shock location (max density gradient on uniform grid)
     if len(x_line) > 2:
-        drho_dx = np.gradient(rho_line, x_line)
+        # Interpolate onto uniform grid to avoid non-uniform spacing bias
+        n_uniform = 1000
+        x_uniform = np.linspace(x_line[0], x_line[-1], n_uniform)
+        rho_uniform = np.interp(x_uniform, x_line, rho_line)
+        drho_dx = np.gradient(rho_uniform, x_uniform)
         idx_shock = int(np.argmax(np.abs(drho_dx)))
-        x_shock = float(x_line[idx_shock])
+        x_shock = float(x_uniform[idx_shock])
     else:
         x_shock = x_body_nose
 
