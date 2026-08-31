@@ -1,71 +1,120 @@
-"""Blunt body geometry configuration."""
+"""Blunt body geometry configuration.
+
+Sphere + optional toroidal fillet + conical frustum body shape for
+hypersonic aerothermodynamics analysis.
+"""
+
 import math
 from dataclasses import dataclass
-from typing import Any
 
 
 @dataclass(frozen=True)
 class BluntBodyConfig:
-    """Spherically-blunted cone configuration.
+    """Spherically-blunted cone with optional toroidal shoulder fillet.
+
+    The body profile is defined by three sections:
+      1. Sphere: x(phi) = R*sin(phi), r(phi) = R*(1-cos(phi))
+      2. Toroidal fillet (optional): smooth blend from sphere to cone
+      3. Cone: straight frustum to base
 
     Attributes:
-        R_nose: Nose sphere radius (m)
-        half_angle: Cone half-angle (degrees)
-        base_radius: Base radius of the cone (m)
-        body_length: Total body length (m, 0 = auto-compute from base_radius)
-        num_points: Number of contour points
+        R_shield: Heat shield sphere radius (m).
+        R_fillet: Toroidal shoulder fillet radius (m). 0 = no fillet.
+        cone_half_angle: Cone half-angle (degrees).
+        max_radius: Maximum body radius (m) at the shoulder.
+        base_radius: Base (aft) radius (m).
+        body_length: Total body length (m). 0 = auto-compute from geometry.
+        num_points: Number of contour points.
     """
-    R_nose: float = 0.196        # m
-    half_angle: float = 50.0     # degrees
-    base_radius: float = 1.955   # m
-    body_length: float = 0.0     # 0 = auto-compute
-    num_points: int = 300
+
+    R_shield: float = 0.196  # m
+    R_fillet: float = 0.0  # m, 0 = no fillet
+    cone_half_angle: float = 50.0  # degrees
+    max_radius: float = 0.196  # m
+    base_radius: float = 1.955  # m
+    body_length: float = 0.0  # 0 = auto-compute
+    num_points: int = 400
+
+    # ------------------------------------------------------------------
+    # Backward-compatible aliases
+    # ------------------------------------------------------------------
+    @property
+    def R_nose(self) -> float:
+        """Nose sphere radius (m). Alias for R_shield."""
+        return self.R_shield
+
+    @property
+    def half_angle(self) -> float:
+        """Cone half-angle (degrees). Alias for cone_half_angle."""
+        return self.cone_half_angle
 
     @property
     def half_angle_rad(self) -> float:
         """Cone half-angle in radians."""
-        return math.radians(self.half_angle)
-
-    @property
-    def junction_x(self) -> float:
-        """Axial coordinate at sphere-cone junction (m).
-
-        x_junction = R_nose * sin(theta)
-        """
-        return self.R_nose * math.sin(self.half_angle_rad)
-
-    @property
-    def junction_r(self) -> float:
-        """Radial coordinate at sphere-cone junction (m).
-
-        r_junction = R_nose * (1 - cos(theta))
-        """
-        return self.R_nose * (1.0 - math.cos(self.half_angle_rad))
+        return math.radians(self.cone_half_angle)
 
     @property
     def computed_body_length(self) -> float:
         """Total body length from nose tip to base (m).
 
-        L = (base_radius - junction_r) / tan(theta) + junction_x
-        """
-        return (self.base_radius - self.junction_r) / math.tan(self.half_angle_rad) + self.junction_x
-
-    @property
-    def computed_base_radius(self) -> float:
-        """Base radius from body_length (if body_length is set).
-
-        R_base = junction_r + (L - junction_x) * tan(theta)
+        If body_length > 0 the user-specified value is returned.
+        Otherwise the length is computed from the junction geometry
+        so that the cone reaches base_radius.
         """
         if self.body_length > 0:
-            return self.junction_r + (self.body_length - self.junction_x) * math.tan(self.half_angle_rad)
-        return self.base_radius
+            return self.body_length
+
+        theta = self.half_angle_rad
+
+        if self.R_fillet > 0:
+            # Sphere-fillet junction angle
+            cos_phi = (self.R_shield + self.R_fillet - self.max_radius) / (
+                self.R_shield + self.R_fillet
+            )
+            phi_sf = math.acos(max(-1.0, min(1.0, cos_phi)))
+            # Fillet center
+            x_f = (self.R_shield - self.R_fillet) * math.sin(phi_sf)
+            r_f = self.R_shield - (self.R_shield + self.R_fillet) * math.cos(phi_sf)
+            # Fillet-cone junction (cone tangent point)
+            x_tc = x_f + self.R_fillet * math.sin(theta)
+            r_tc = r_f + self.R_fillet * math.cos(theta)
+            return x_tc + (r_tc - self.base_radius) / math.tan(theta)
+        else:
+            phi_j = math.acos(1.0 - self.max_radius / self.R_shield)
+            x_j = self.R_shield * math.sin(phi_j)
+            return x_j + (self.max_radius - self.base_radius) / math.tan(theta)
+
+    @property
+    def junction_x(self) -> float:
+        """x at sphere-fillet or sphere-cone junction (m)."""
+        if self.R_fillet > 0:
+            cos_phi = (self.R_shield + self.R_fillet - self.max_radius) / (
+                self.R_shield + self.R_fillet
+            )
+            phi_sf = math.acos(max(-1.0, min(1.0, cos_phi)))
+            return self.R_shield * math.sin(phi_sf)
+        else:
+            phi_j = math.acos(1.0 - self.max_radius / self.R_shield)
+            return self.R_shield * math.sin(phi_j)
+
+    @property
+    def junction_r(self) -> float:
+        """r at sphere-fillet or sphere-cone junction (m)."""
+        if self.R_fillet > 0:
+            cos_phi = (self.R_shield + self.R_fillet - self.max_radius) / (
+                self.R_shield + self.R_fillet
+            )
+            phi_sf = math.acos(max(-1.0, min(1.0, cos_phi)))
+            return self.R_shield * (1.0 - math.cos(phi_sf))
+        else:
+            return self.max_radius
 
     @classmethod
-    def validate(cls, **kwargs: Any) -> "BluntBodyConfig":
-        """Create and validate BluntBodyConfig.
+    def validate(cls, **kwargs) -> "BluntBodyConfig":
+        """Create and validate a BluntBodyConfig.
 
         Args:
-            **kwargs: Keyword arguments passed to BluntBodyConfig constructor.
+            **kwargs: Keyword arguments passed to the constructor.
 
         Returns:
             Validated BluntBodyConfig instance.
@@ -73,22 +122,31 @@ class BluntBodyConfig:
         Raises:
             ValueError: If any parameter is out of range.
         """
-        config = cls(**kwargs)
-        if config.R_nose <= 0:
+        R_shield = kwargs.get("R_shield", 0.196)
+        R_fillet = kwargs.get("R_fillet", 0.0)
+        max_radius = kwargs.get("max_radius", R_shield)
+        base_radius = kwargs.get("base_radius", max_radius * 0.8)
+        cone_half_angle = kwargs.get("cone_half_angle", 50.0)
+        num_points = kwargs.get("num_points", 400)
+
+        if R_shield <= 0:
+            raise ValueError(f"R_shield must be > 0, got {R_shield}")
+        if R_fillet < 0:
+            raise ValueError(f"R_fillet must be >= 0, got {R_fillet}")
+        if cone_half_angle <= 0 or cone_half_angle >= 90:
             raise ValueError(
-                f"R_nose must be > 0, got {config.R_nose}"
+                f"cone_half_angle must be in (0, 90), got {cone_half_angle}"
             )
-        if config.half_angle <= 0 or config.half_angle >= 85:
+        if max_radius <= 0:
+            raise ValueError(f"max_radius must be > 0, got {max_radius}")
+        if base_radius <= 0 or base_radius >= max_radius:
             raise ValueError(
-                f"half_angle must be > 0 and < 85 degrees, got {config.half_angle}"
+                f"base_radius must be in (0, max_radius), got {base_radius}"
             )
-        if config.base_radius <= config.junction_r:
-            raise ValueError(
-                f"base_radius must be > junction_r ({config.junction_r:.6f}), "
-                f"got {config.base_radius}"
-            )
-        if config.num_points < 10:
-            raise ValueError(
-                f"num_points must be >= 10, got {config.num_points}"
-            )
-        return config
+        if num_points < 10:
+            raise ValueError(f"num_points must be >= 10, got {num_points}")
+        if R_fillet > 0:
+            cos_phi = (R_shield + R_fillet - max_radius) / (R_shield + R_fillet)
+            if cos_phi < -1 or cos_phi > 1:
+                raise ValueError("Invalid geometry: fillet cannot reach max_radius")
+        return cls(**kwargs)
