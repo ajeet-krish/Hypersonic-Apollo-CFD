@@ -1,7 +1,7 @@
 """Surface heat flux plotting for hypersonic blunt body CFD results.
 
 Line plot of heat flux vs arc length along the body surface, with the
-stagnation point peak marked, using the reentry orange/amber theme.
+stagnation point peak marked.
 """
 from pathlib import Path
 
@@ -21,7 +21,7 @@ def plot_surface_heat_flux(
     """Plot surface heat flux vs arc length.
 
     Shows the heat flux distribution along the body surface with the
-    stagnation point peak highlighted. Uses the reentry orange/amber theme.
+    stagnation point peak highlighted.
 
     Args:
         s_profile: Arc length along the body surface (m).

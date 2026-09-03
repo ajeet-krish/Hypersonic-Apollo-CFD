@@ -1,7 +1,6 @@
 """Mesh visualization for hypersonic blunt body CFD.
 
-Renders a coarse view of the 2D mesh using matplotlib triplot,
-with the reentry orange/amber theme.
+Renders a coarse view of the 2D mesh using matplotlib triplot.
 """
 from pathlib import Path
 
@@ -87,8 +86,8 @@ def plot_mesh(
 ) -> Path:
     """Render a coarse view of the 2D mesh using matplotlib triplot.
 
-    Displays a subsampled view of the mesh elements with the reentry
-    orange/amber theme. The body contour is overlaid as a thick line.
+    Displays a subsampled view of the mesh elements. The body contour
+    is overlaid as a thick line.
 
     Args:
         mesh_path: Path to the .su2 mesh file.

@@ -1,7 +1,7 @@
 """3D revolved body visualization for hypersonic blunt body CFD.
 
 Creates a 3D surface of revolution by revolving the 2D body contour around
-the x-axis, using matplotlib's plot_surface with the reentry orange/amber theme.
+the x-axis, using matplotlib's plot_surface with professional academic styling.
 """
 from pathlib import Path
 
@@ -23,8 +23,7 @@ def plot_body_3d(
     """Create a 3D revolved surface plot of the blunt body.
 
     Revolves the 2D body contour around the x-axis to create a 3D
-    surface of revolution. Uses the reentry orange/amber theme with
-    colormap mapped to axial position.
+    surface of revolution. Uses a colormap mapped to axial position.
 
     Args:
         config: BluntBodyConfig with R_nose, half_angle, base_radius.

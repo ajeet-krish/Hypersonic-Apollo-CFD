@@ -1,7 +1,7 @@
 """Contour plotting for hypersonic blunt body CFD results.
 
 2D filled contour plots of Mach, pressure, and temperature in the (x, r) plane
-using matplotlib tricontourf with the reentry orange/amber theme.
+using matplotlib tricontourf with professional academic styling.
 """
 from pathlib import Path
 
@@ -104,8 +104,8 @@ def plot_mach_contour(
 ) -> Path:
     """Plot 2D filled Mach number contour in the (x, r) plane.
 
-    Uses matplotlib tricontourf with 'inferno' colormap (dark-to-bright
-    orange theme). Overlays body contour if provided.
+    Uses matplotlib tricontourf with 'inferno' colormap. Overlays body
+    contour if provided.
 
     Args:
         data: VTUData with coordinates and Mach field.
@@ -148,7 +148,7 @@ def plot_pressure_contour(
 ) -> Path:
     """Plot 2D filled static pressure contour in the (x, r) plane.
 
-    Uses 'magma' colormap (dark-to-bright warm).
+    Uses 'magma' colormap.
 
     Args:
         data: VTUData with coordinates and Pressure field.
@@ -188,7 +188,7 @@ def plot_temperature_contour(
 ) -> Path:
     """Plot 2D filled static temperature contour in the (x, r) plane.
 
-    Uses 'plasma' colormap (dark-to-bright warm purple/orange).
+    Uses 'plasma' colormap.
 
     Args:
         data: VTUData with coordinates and Temperature field.

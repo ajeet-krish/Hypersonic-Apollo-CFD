@@ -2,7 +2,6 @@
 
 Bar/scatter plot comparing SU2 stagnation heat flux against published
 Apollo flight data points, with condition annotations and caveat note.
-Uses the reentry orange/amber theme.
 """
 from pathlib import Path
 

@@ -20,8 +20,7 @@ def plot_validation_bars(
     """Plot bar chart comparing SU2 vs analytical for each quantity.
 
     Shows paired bars (SU2 vs analytical) for each validated quantity,
-    with error % labels and PASS/FAIL coloring using the orange/amber
-    theme.
+    with error % labels and PASS/FAIL coloring.
 
     Args:
         validation_report: Report dict from build_validation_report().

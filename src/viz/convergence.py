@@ -1,6 +1,6 @@
 """Convergence history plotting for SU2 hypersonic simulations.
 
-Plots RMS residual history in the reentry orange/amber theme.
+Plots RMS residual convergence history.
 """
 from pathlib import Path
 
