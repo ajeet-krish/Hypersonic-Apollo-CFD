@@ -45,9 +45,9 @@ class TestSU2HypersonicConfigDefaults:
         assert config.freestream_temperature == 226.65
 
     def test_default_wall_temperature(self):
-        """Default wall temperature should be 300 K."""
+        """Default wall temperature should be 2500 K."""
         config = SU2HypersonicConfig()
-        assert config.wall_temperature == 300.0
+        assert config.wall_temperature == 2500.0
 
     def test_default_cfl(self):
         """Default CFL should be 0.1."""
@@ -131,16 +131,19 @@ class TestSU2HypersonicConfigWrite:
             "FREESTREAM_TEMPERATURE= 226.65",
             "FREESTREAM_DENSITY= 0.0184",
             "FREESTREAM_VISCOSITY= 1.477e-05",
-            "MARKER_ISOTHERMAL= ( body, 300.0 )",
+            "MARKER_ISOTHERMAL= ( body, 2500.0 )",
             "MARKER_FAR= ( farfield )",
             "MARKER_SYM= ( sym )",
             "CONV_NUM_METHOD_FLOW= AUSM",
             "MUSCL_FLOW= YES",
-            "SLOPE_LIMITER_FLOW= VENKATAKRISHNAN",
+            "SLOPE_LIMITER_FLOW= MINMOD",
+            "ENTROPY_FIX_COEFF= 0.1",
             "CONV_NUM_METHOD_TURB= SCALAR_UPWIND",
             "MUSCL_TURB= NO",
             "TIME_DISCRE_FLOW= EULER_IMPLICIT",
             "TIME_DISCRE_TURB= EULER_IMPLICIT",
+            "LINEAR_SOLVER= BCGSTAB",
+            "LINEAR_SOLVER_PREC= ILU",
             "CFL_NUMBER= 0.1",
             "CFL_ADAPT= YES",
             "ITER= 10000",
@@ -198,7 +201,7 @@ class TestSU2HypersonicConfigWrite:
         config = SU2HypersonicConfig()
         cfg_path = config.write(tmp_path)
         content = cfg_path.read_text()
-        assert "CFL_ADAPT_PARAM= ( 0.1, 2.0, 0.5, 100.0 )" in content
+        assert "CFL_ADAPT_PARAM= ( 0.1, 2.0, 0.5, 1.5 )" in content
 
     def test_cfg_cfl_adapt_params_custom(self, tmp_path: Path):
         """Custom CFL adapt parameters should appear in config."""
@@ -458,7 +461,7 @@ class TestWithWallTemperature:
         """with_wall_temperature() should return a new config."""
         original = SU2HypersonicConfig()
         modified = original.with_wall_temperature(600.0)
-        assert original.wall_temperature == 300.0
+        assert original.wall_temperature == 2500.0
         assert modified.wall_temperature == 600.0
 
     def test_with_wall_temperature_preserves_other_fields(self):
@@ -512,7 +515,8 @@ class TestCfgFileIntegrity:
                 # Skip non-numeric values
                 if value in ("YES", "NO", "SI", "RANS", "SA", "ROE",
                              "AUSM", "AUSMPLUS",
-                             "EULER_IMPLICIT", "FGMRES", "ILU",
+                             "EULER_IMPLICIT", "FGMRES", "BCGSTAB", "ILU",
+                             "MINMOD",
                              "VENKATAKRISHNAN_WANG", "VENKATAKRISHNAN",
                              "SCALAR_UPWIND", "DIRECT", "RMS_DENSITY",
                              "SU2"):

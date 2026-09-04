@@ -4,6 +4,7 @@ Extracts physics from VTU solution files: surface profiles, shock standoff,
 total heating, and real-gas corrections.
 """
 import json
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -94,7 +95,7 @@ def extract_surface_profiles(
     return {"s": s, "q": q, "p": p, "cp": cp, "theta": theta}
 
 
-def measure_shock_standoff(data: VTUData, R_nose: float) -> float:
+def measure_shock_standoff(data: VTUData, R_nose: float, config_mach: float | None = None) -> float:
     """Measure shock standoff distance from the density gradient.
 
     Finds the shock location along the stagnation streamline (r ~ 0) by
@@ -113,11 +114,28 @@ def measure_shock_standoff(data: VTUData, R_nose: float) -> float:
     Args:
         data: Parsed VTU solution data.
         R_nose: Nose sphere radius (m).
+        config_mach: Freestream Mach number from config. If provided, the
+            function checks for solver divergence (max_mach > 3 * config_mach)
+            and returns 0.0 with a warning if detected.
 
     Returns:
         Shock standoff distance delta (m). Returns 0.0 if density data
-        is not available or shock cannot be detected.
+        is not available, shock cannot be detected, or solution appears
+        diverged.
     """
+    # Divergence guard: if max Mach in field exceeds 3x the freestream,
+    # the SU2 solution has almost certainly blown up (e.g., M=15.6 producing
+    # max_mach=161). Return 0.0 to avoid post-processing a diverged field.
+    if config_mach is not None and data.mach is not None:
+        max_mach = float(data.mach.max())
+        if max_mach > 3.0 * config_mach:
+            warnings.warn(
+                f"Solution appears diverged: max Mach {max_mach:.2f} exceeds "
+                f"3x freestream Mach {config_mach:.2f}. Returning shock "
+                f"standoff = 0.0.",
+                stacklevel=2,
+            )
+            return 0.0
     if data.density is None:
         return 0.0
 
@@ -380,9 +398,9 @@ def measure_shock_standoff_r_nose(
 ) -> float:
     """Estimate nose radius from the body contour.
 
-    For a spherical nose centered at (0, -R_nose) in the (x, r) plane,
-    the sphere equation is x^2 + (r + R)^2 = R^2. Given a point (x_j, r_j)
-    on the sphere, R_nose = -(x_j^2 + r_j^2) / (2 * r_j).
+    For a spherical nose centered at (0, R_nose) in the (x, r) plane,
+    the sphere equation is x^2 + (r - R)^2 = R^2. Given a point (x_j, r_j)
+    on the sphere, R_nose = (x_j^2 + r_j^2) / (2 * r_j).
 
     Uses the last point of the spherical nose section (near the junction).
 
@@ -401,10 +419,10 @@ def measure_shock_standoff_r_nose(
     x_pts = x_contour[:n_fit]
     r_pts = r_contour[:n_fit]
 
-    # For a sphere centered at (0, -R) with radius R:
-    #   x^2 + (r + R)^2 = R^2
+    # For a sphere centered at (0, R) with radius R:
+    #   x^2 + (r - R)^2 = R^2
     # Given a point (x_j, r_j):
-    #   R = -(x_j^2 + r_j^2) / (2 * r_j)
+    #   R = (x_j^2 + r_j^2) / (2 * r_j)
     # Use the last point of the sphere section for accuracy
     x_j = float(x_pts[-1])
     r_j = float(r_pts[-1])
@@ -412,7 +430,7 @@ def measure_shock_standoff_r_nose(
     if abs(r_j) < 1e-12:
         return 0.1
 
-    R_nose = -(x_j**2 + r_j**2) / (2.0 * r_j)
+    R_nose = (x_j**2 + r_j**2) / (2.0 * r_j)
 
     # Sanity check: R_nose should be positive and reasonable
     if R_nose <= 0 or R_nose > 100.0:

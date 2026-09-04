@@ -62,7 +62,7 @@ class SU2HypersonicConfig:
     reynolds_number: float = 2.95e6  # Re_L, computed from atmosphere
 
     # Wall
-    wall_temperature: float = 300.0  # K (isothermal)
+    wall_temperature: float = 2500.0  # AVCOAT ablative heat shield approximate equilibrium temperature
     wall_marker: str = "body"
 
     # Boundaries
@@ -75,13 +75,14 @@ class SU2HypersonicConfig:
     cfl_adapt_min: float = 0.1
     cfl_adapt_max: float = 2.0
     cfl_adapt_decrease: float = 0.5
-    cfl_adapt_increase: float = 100.0
+    cfl_adapt_increase: float = 1.5  # Critical for hypersonic stability; large jumps cause divergence
     iterations: int = 10000
     conv_residual_minval: float = -6.0
     conv_num_method: str = "AUSM"
     muscl: bool = True
-    limiter: str = "VENKATAKRISHNAN"
-    linear_solver: str = "FGMRES"
+    limiter: str = "MINMOD"
+    entropy_fix_coeff: float = 0.1
+    linear_solver: str = "BCGSTAB"
     linear_solver_prec: str = "ILU"
     linear_solver_error: float = 1e-6
     linear_solver_iter: int = 10
@@ -198,6 +199,7 @@ REYNOLDS_LENGTH= {self.ref_length}
 CONV_NUM_METHOD_FLOW= {self.conv_num_method}
 MUSCL_FLOW= {'YES' if self.muscl else 'NO'}
 SLOPE_LIMITER_FLOW= {self.limiter}
+ENTROPY_FIX_COEFF= {self.entropy_fix_coeff}
 
 % Time discretization
 TIME_DISCRE_FLOW= EULER_IMPLICIT

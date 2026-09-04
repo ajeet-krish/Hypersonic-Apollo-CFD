@@ -65,10 +65,10 @@ class MeshConfig:
             )
 
     def resolve_first_cell_height(self, R_nose: float) -> float:
-        """Return effective first cell height, falling back to 1e-6 * R_nose.
+        """Return effective first cell height, targeting y+ < 1 for hypersonic RANS.
 
         For y+ < 1 with typical hypersonic Re numbers, the first cell height
-        must be ~1e-6 * R_nose (not 1e-3 which was the old default).
+        must be ~1e-6 * R_nose (not 1e-4 which gives y+ ~100-1000).
 
         Args:
             R_nose: Nose sphere radius (m).
@@ -78,7 +78,7 @@ class MeshConfig:
         """
         if self.first_cell_height is not None and self.first_cell_height > 0:
             return self.first_cell_height
-        return 1e-4 * R_nose
+        return 1e-6 * R_nose
 
     @property
     def total_axial_cells(self) -> int:
