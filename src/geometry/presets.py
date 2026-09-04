@@ -8,19 +8,21 @@ from .config import BluntBodyConfig
 def apollo_cm() -> BluntBodyConfig:
     """Apollo Command Module blunt body geometry.
 
-    Source: IRJET 2017 (Shafeeque et al.), AS-202 flight data.
+    Source: NASA Technical Drawings, AS-202 flight data.
     Spherical heat shield (R=4.694m) + 33-deg conical afterbody.
     Max diameter 3.91m (radius 1.955m), base radius 1.5m.
+    Junction fillet R=0.196m, base fillet R=0.231m.
 
     Returns:
         BluntBodyConfig matching Apollo CM dimensions.
     """
     return BluntBodyConfig(
         R_shield=4.694,
-        R_fillet=0.0,
+        R_fillet=0.196,
         cone_half_angle=33.0,
         max_radius=1.955,
         base_radius=1.5,
+        base_fillet_radius=0.231,
         num_points=600,
     )
 

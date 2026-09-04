@@ -10,12 +10,13 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class BluntBodyConfig:
-    """Spherically-blunted cone with optional toroidal shoulder fillet.
+    """Spherically-blunted cone with optional toroidal shoulder and base fillets.
 
-    The body profile is defined by three sections:
+    The body profile is defined by four sections:
       1. Sphere: x(phi) = R*sin(phi), r(phi) = R*(1-cos(phi))
-      2. Toroidal fillet (optional): smooth blend from sphere to cone
+      2. Toroidal shoulder fillet (optional): smooth blend from sphere to cone
       3. Cone: straight frustum to base
+      4. Toroidal base fillet (optional): smooth blend at base edge
 
     Attributes:
         R_shield: Heat shield sphere radius (m).
@@ -23,15 +24,17 @@ class BluntBodyConfig:
         cone_half_angle: Cone half-angle (degrees).
         max_radius: Maximum body radius (m) at the shoulder.
         base_radius: Base (aft) radius (m).
+        base_fillet_radius: Base edge fillet radius (m). 0 = no fillet.
         body_length: Total body length (m). 0 = auto-compute from geometry.
         num_points: Number of contour points.
     """
 
     R_shield: float = 0.196  # m
-    R_fillet: float = 0.0  # m, 0 = no fillet
+    R_fillet: float = 0.0  # m, 0 = no shoulder fillet
     cone_half_angle: float = 50.0  # degrees
     max_radius: float = 0.196  # m
     base_radius: float = 1.955  # m
+    base_fillet_radius: float = 0.0  # m, 0 = no base fillet
     body_length: float = 0.0  # 0 = auto-compute
     num_points: int = 400
 

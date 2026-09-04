@@ -59,6 +59,6 @@ class TestPresets:
         assert validated.R_nose == 0.1
 
     def test_apollo_cm_docstring_source(self):
-        """Apollo CM docstring should reference IRJET and AS-202."""
-        assert "IRJET" in apollo_cm.__doc__
+        """Apollo CM docstring should reference NASA and AS-202."""
+        assert "NASA" in apollo_cm.__doc__
         assert "AS-202" in apollo_cm.__doc__
