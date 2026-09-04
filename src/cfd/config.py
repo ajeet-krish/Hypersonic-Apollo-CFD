@@ -158,14 +158,18 @@ TIME_DISCRE_TURB= EULER_IMPLICIT"""
         )
 
         # Build boundary conditions
+        sym_line = f"MARKER_SYM= ( {self.sym_marker} )" if self.axisymmetric else ""
+        bc_parts: list[str] = []
         if self.solver == "EULER":
-            bc_section = f"""MARKER_EULER= ( {self.wall_marker} )
-MARKER_FAR= ( {self.farfield_marker} )
-MARKER_SYM= ( {self.sym_marker} )"""
+            bc_parts.append(f"MARKER_EULER= ( {self.wall_marker} )")
         else:
-            bc_section = f"""MARKER_ISOTHERMAL= ( {self.wall_marker}, {self.wall_temperature:.1f} )
-MARKER_FAR= ( {self.farfield_marker} )
-MARKER_SYM= ( {self.sym_marker} )"""
+            bc_parts.append(
+                f"MARKER_ISOTHERMAL= ( {self.wall_marker}, {self.wall_temperature:.1f} )"
+            )
+        bc_parts.append(f"MARKER_FAR= ( {self.farfield_marker} )")
+        if sym_line:
+            bc_parts.append(sym_line)
+        bc_section = "\n".join(bc_parts)
 
         config_content = f"""% ------- Hypersonic Blunt Body Aerothermodynamics - {self.solver} Config --------
 % Axisymmetric {self.solver}, M={self.mach}, Alt=30 km
@@ -375,6 +379,19 @@ MESH_FORMAT= SU2
         new.cfl_adapt_max = cfl_max
         new.cfl_adapt_decrease = decrease
         new.cfl_adapt_increase = increase
+        return new
+
+    def as_full2d(self) -> "SU2HypersonicConfig":
+        """Return a copy configured for full 2D (not axisymmetric).
+
+        Used for full external flow simulations where the body is not
+        symmetric about the x-axis, such as angle of attack studies.
+
+        Returns:
+            New SU2HypersonicConfig with AXISYMMETRIC=NO.
+        """
+        new = copy.deepcopy(self)
+        new.axisymmetric = False
         return new
 
 

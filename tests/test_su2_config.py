@@ -488,6 +488,37 @@ class TestGetSU2Binary:
         assert binary.name == "SU2_CFD"
 
 
+class TestSU2HypersonicConfigAsFull2d:
+    """Tests for as_full2d() method."""
+
+    def test_returns_deep_copy(self):
+        original = SU2HypersonicConfig()
+        copy = original.as_full2d()
+        assert copy is not original
+
+    def test_sets_axisymmetric_false(self):
+        original = SU2HypersonicConfig()
+        copy = original.as_full2d()
+        assert copy.axisymmetric is False
+
+    def test_original_unchanged(self):
+        original = SU2HypersonicConfig()
+        _ = original.as_full2d()
+        assert original.axisymmetric is True
+
+    def test_cfg_excludes_sym_for_full2d(self, tmp_path):
+        config = SU2HypersonicConfig().as_full2d()
+        cfg_path = config.write(tmp_path)
+        content = cfg_path.read_text()
+        assert "MARKER_SYM" not in content
+
+    def test_cfg_includes_sym_for_axisymmetric(self, tmp_path):
+        config = SU2HypersonicConfig()
+        cfg_path = config.write(tmp_path)
+        content = cfg_path.read_text()
+        assert "MARKER_SYM" in content
+
+
 class TestCfgFileIntegrity:
     """Tests for overall config file integrity."""
 

@@ -24,6 +24,7 @@ class MeshConfig:
         shock_standoff_factor: Refinement zone = factor * delta (shock standoff).
         farfield_distance: Farfield boundary distance in x * R_nose units.
         mesh_tier: Refinement tier (draft, standard, high).
+        domain_type: Mesh domain type ('axisymmetric' or 'full2d').
     """
 
     n_bl: int = 50
@@ -36,6 +37,7 @@ class MeshConfig:
     shock_standoff_factor: float = 1.5
     farfield_distance: float = 25.0
     mesh_tier: str = "standard"
+    domain_type: str = "axisymmetric"
 
     def __post_init__(self) -> None:
         """Validate configuration values after initialization."""
@@ -50,6 +52,10 @@ class MeshConfig:
         if self.mesh_tier not in ("draft", "standard", "high"):
             raise ValueError(
                 f"mesh_tier must be 'draft', 'standard', or 'high', got '{self.mesh_tier}'"
+            )
+        if self.domain_type not in ("axisymmetric", "full2d"):
+            raise ValueError(
+                f"domain_type must be 'axisymmetric' or 'full2d', got '{self.domain_type}'"
             )
         if self.n_axial_nose < 10:
             raise ValueError(
@@ -96,6 +102,17 @@ class MeshConfig:
         """
         return self.total_axial_cells * self.n_radial
 
+    @property
+    def effective_farfield_distance(self) -> float:
+        """Farfield distance adjusted for domain type.
+
+        For full2d domains the farfield is slightly larger to accommodate
+        the mirrored body geometry without clipping the shock layer.
+        """
+        if self.domain_type == "full2d":
+            return self.farfield_distance * 1.2
+        return self.farfield_distance
+
     @classmethod
     def for_tier(cls, tier: str, **overrides: object) -> "MeshConfig":
         """Create MeshConfig scaled for the given refinement tier.
@@ -129,6 +146,7 @@ class MeshConfig:
             shock_standoff_factor=float(overrides.pop("shock_standoff_factor", 1.5)),
             farfield_distance=float(overrides.pop("farfield_distance", 25.0)),
             mesh_tier=tier,
+            domain_type=str(overrides.pop("domain_type", "axisymmetric")),
         )
 
         # Apply any remaining overrides via replace pattern
@@ -145,6 +163,7 @@ class MeshConfig:
                 "shock_standoff_factor": config.shock_standoff_factor,
                 "farfield_distance": config.farfield_distance,
                 "mesh_tier": config.mesh_tier,
+                "domain_type": config.domain_type,
             }
             field_dict.update(overrides)  # type: ignore[arg-type]
             config = cls(**field_dict)

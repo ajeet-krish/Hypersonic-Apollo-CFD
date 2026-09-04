@@ -162,3 +162,35 @@ class TestMeshConfigProperties:
         """estimated_cell_count = total_axial * n_radial."""
         config = MeshConfig(n_axial_nose=60, n_axial_cone=80, n_radial=80)
         assert config.estimated_cell_count == 140 * 80
+
+
+class TestMeshConfigDomainType:
+    """Tests for domain_type field."""
+
+    def test_default_is_axisymmetric(self):
+        config = MeshConfig()
+        assert config.domain_type == "axisymmetric"
+
+    def test_full2d_valid(self):
+        config = MeshConfig(domain_type="full2d")
+        assert config.domain_type == "full2d"
+
+    def test_invalid_domain_type_raises(self):
+        with pytest.raises(ValueError, match="domain_type"):
+            MeshConfig(domain_type="invalid")
+
+    def test_for_tier_preserves_domain_type(self):
+        config = MeshConfig.for_tier("standard", domain_type="full2d")
+        assert config.domain_type == "full2d"
+
+
+class TestMeshConfigEffectiveFarfield:
+    """Tests for effective_farfield_distance property."""
+
+    def test_axisymmetric_uses_raw_distance(self):
+        config = MeshConfig(farfield_distance=25.0, domain_type="axisymmetric")
+        assert config.effective_farfield_distance == 25.0
+
+    def test_full2d_uses_1_2x_distance(self):
+        config = MeshConfig(farfield_distance=25.0, domain_type="full2d")
+        assert config.effective_farfield_distance == 30.0
