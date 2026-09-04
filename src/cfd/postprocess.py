@@ -318,7 +318,9 @@ def build_results_summary(
     # Nose radius estimation
     r_nose_measured = measure_shock_standoff_r_nose(x_contour, r_contour)
 
-    shock_standoff = measure_shock_standoff(data, r_nose_measured)
+    shock_standoff = measure_shock_standoff(
+        data, r_nose_measured, config_mach=getattr(config, "mach", None),
+    )
 
     # Total heating (axisymmetric)
     total_heating = compute_total_heating_axisymmetric(

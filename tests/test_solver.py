@@ -191,6 +191,47 @@ class TestComputeResidualDrop:
         assert drop < 0
 
 
+class TestFindRestartFile:
+    """Tests for _find_restart_file static method."""
+
+    def test_finds_restart_dat(self, tmp_path):
+        """Should find restart.dat (SU2 v8.x naming)."""
+        (tmp_path / "restart.dat").touch()
+        result = SU2Solver._find_restart_file(tmp_path)
+        assert result == tmp_path / "restart.dat"
+
+    def test_no_restart_returns_none(self, tmp_path):
+        """Should return None when no restart files exist."""
+        result = SU2Solver._find_restart_file(tmp_path)
+        assert result is None
+
+    def test_prefers_restart_dat_over_flow_restart(self, tmp_path):
+        """Should prefer restart.dat over flow_restart_*.dat."""
+        (tmp_path / "restart.dat").touch()
+        (tmp_path / "flow_restart_000100.dat").touch()
+        result = SU2Solver._find_restart_file(tmp_path)
+        assert result.name == "restart.dat"
+
+    def test_finds_flow_restart_latest(self, tmp_path):
+        """Should find the latest flow_restart file when no restart.dat."""
+        (tmp_path / "flow_restart_000050.dat").touch()
+        (tmp_path / "flow_restart_000100.dat").touch()
+        (tmp_path / "flow_restart_000025.dat").touch()
+        result = SU2Solver._find_restart_file(tmp_path)
+        assert result.name == "flow_restart_000100.dat"
+
+    def test_empty_dir_returns_none(self, tmp_path):
+        """Empty directory returns None."""
+        result = SU2Solver._find_restart_file(tmp_path)
+        assert result is None
+
+    def test_only_flow_restart_files(self, tmp_path):
+        """Should fall back to flow_restart when restart.dat absent."""
+        (tmp_path / "flow_restart_000200.dat").touch()
+        result = SU2Solver._find_restart_file(tmp_path)
+        assert result.name == "flow_restart_000200.dat"
+
+
 class TestSU2SolverRunNotFound:
     """Tests for SU2Solver.run with missing binary."""
 

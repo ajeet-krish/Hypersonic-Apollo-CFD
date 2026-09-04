@@ -345,10 +345,10 @@ class SU2Solver:
                         restart_file.name,
                     )
 
-            # Only output RESTART files (not PARAVIEW) for intermediate stages
-            if not is_first:
-                cfg.output_files = ("RESTART",)
-            else:
+            # Only output RESTART files for intermediate stages;
+            # first and last stages get full output (RESTART, PARAVIEW, SURFACE_CSV).
+            is_last = (i == len(strategy.stages) - 1)
+            if not is_first and not is_last:
                 cfg.output_files = ("RESTART",)
 
             # Write config and run

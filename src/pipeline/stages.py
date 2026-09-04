@@ -283,31 +283,15 @@ def run_su2_stage(config: CaseConfig) -> int:
 
     solver = SU2Solver()
 
-    # Use explicit ConvergenceStrategy if provided
-    if config.convergence_strategy is not None:
-        from cfd.convergence import ConvergenceStrategy
+    from cfd.convergence import ConvergenceStrategy
 
-        strategy = config.convergence_strategy
-        print(f"  Using explicit ConvergenceStrategy: {len(strategy.stages)} stages")
-        for i, stage in enumerate(strategy.stages):
-            print(f"    {i + 1}. {stage.name} (M={stage.mach}, "
-                  f"CFL={stage.cfl}, iters={stage.iterations})")
-        results = solver.run_stages(strategy, su2_config, su2_dir, mesh_filename)
-        return _report_and_save(results, su2_config, su2_dir, config)
-
-    # Dispatch to strategy
-    if config.su2_strategy == "euler-rans":
-        return _run_euler_rans(
-            su2_config, solver, su2_dir, mesh_filename, config,
-        )
-    elif config.su2_strategy == "mach-ramp":
-        return _run_mach_ramp(
-            su2_config, solver, su2_dir, mesh_filename, config,
-        )
-    else:
-        return _run_direct(
-            su2_config, solver, su2_dir, mesh_filename, config,
-        )
+    strategy = config.convergence_strategy or ConvergenceStrategy.for_mach(config.mach)
+    print(f"  Strategy: {len(strategy.stages)} stages")
+    for i, stage in enumerate(strategy.stages):
+        print(f"    {i + 1}. {stage.name} (M={stage.mach}, "
+              f"CFL={stage.cfl}, iters={stage.iterations})")
+    results = solver.run_stages(strategy, su2_config, su2_dir, mesh_filename)
+    return _report_and_save(results, su2_config, su2_dir, config)
 
 
 def _run_direct(

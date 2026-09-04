@@ -218,6 +218,118 @@ class TestMeasureShockStandoff:
         assert delta == 0.0
 
 
+class TestMeasureShockStandoffDivergenceGuard:
+    """Tests for divergence guard in measure_shock_standoff."""
+
+    def test_diverged_returns_zero(self):
+        """When max_mach > 3x config_mach, returns 0.0."""
+        n = 100
+        x = np.linspace(-0.5, 2.0, n)
+        r = np.linspace(0, 0.5, n)
+        z = np.zeros(n)
+        coords = np.column_stack([x, r, z])
+
+        # Create a diverged field: max Mach = 20, config Mach = 5
+        mach = np.full(n, 20.0)
+        density = np.ones(n)
+        pressure = np.ones(n)
+
+        data = VTUData(
+            coordinates=coords,
+            point_data={"Mach": mach, "Density": density, "Pressure": pressure},
+        )
+
+        delta = measure_shock_standoff(data, R_nose=0.1, config_mach=5.0)
+        assert delta == 0.0
+
+    def test_diverged_exact_boundary(self):
+        """When max_mach == 3x config_mach, guard does NOT trigger (strict >)."""
+        n = 100
+        x = np.linspace(-0.5, 2.0, n)
+        r = np.linspace(0, 0.5, n)
+        z = np.zeros(n)
+        coords = np.column_stack([x, r, z])
+
+        # max_mach = 15 = 3 * 5, not strictly greater
+        mach = np.full(n, 15.0)
+        density = np.ones(n)
+
+        data = VTUData(
+            coordinates=coords,
+            point_data={"Mach": mach, "Density": density},
+        )
+
+        # Should NOT return 0 due to guard (but may return 0 for other reasons)
+        # Since all density is uniform, no shock gradient, so result is 0.0.
+        # But the guard did NOT trigger, so no warning.
+        delta = measure_shock_standoff(data, R_nose=0.1, config_mach=5.0)
+        # Just verify no exception and a float result
+        assert isinstance(delta, float)
+
+    def test_config_mach_none_skips_guard(self):
+        """When config_mach is None, guard is skipped."""
+        n = 100
+        x = np.linspace(-0.5, 2.0, n)
+        r = np.linspace(0, 0.5, n)
+        z = np.zeros(n)
+        coords = np.column_stack([x, r, z])
+
+        # High Mach but no config_mach -- guard skipped
+        mach = np.full(n, 20.0)
+        density = np.ones(n)
+
+        data = VTUData(
+            coordinates=coords,
+            point_data={"Mach": mach, "Density": density},
+        )
+
+        # Should not raise, guard is bypassed
+        delta = measure_shock_standoff(data, R_nose=0.1, config_mach=None)
+        assert isinstance(delta, float)
+
+    def test_no_mach_data_skips_guard(self):
+        """When VTU has no Mach data, guard is skipped."""
+        n = 100
+        x = np.linspace(-0.5, 2.0, n)
+        r = np.linspace(0, 0.5, n)
+        z = np.zeros(n)
+        coords = np.column_stack([x, r, z])
+
+        density = np.ones(n)
+        data = VTUData(
+            coordinates=coords,
+            point_data={"Density": density},
+        )
+
+        # config_mach provided but no Mach in VTU -- guard skipped
+        delta = measure_shock_standoff(data, R_nose=0.1, config_mach=5.0)
+        assert isinstance(delta, float)
+
+    def test_diverged_produces_warning(self):
+        """Divergence guard should emit a warning."""
+        import warnings
+        n = 100
+        x = np.linspace(-0.5, 2.0, n)
+        r = np.linspace(0, 0.5, n)
+        z = np.zeros(n)
+        coords = np.column_stack([x, r, z])
+
+        mach = np.full(n, 20.0)
+        density = np.ones(n)
+
+        data = VTUData(
+            coordinates=coords,
+            point_data={"Mach": mach, "Density": density},
+        )
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            delta = measure_shock_standoff(data, R_nose=0.1, config_mach=5.0)
+            assert delta == 0.0
+            assert len(w) >= 1
+            assert "diverged" in str(w[0].message).lower()
+
+
 class TestMeasureShockStandoffRNose:
     """Tests for measure_shock_standoff_r_nose function."""
 
