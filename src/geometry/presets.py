@@ -8,23 +8,27 @@ from .config import BluntBodyConfig
 def apollo_cm() -> BluntBodyConfig:
     """Apollo Command Module blunt body geometry.
 
-    Source: NASA TN D-6028 (1970), NASA TN D-4185 (1967).
-    Spherical heat shield (R=4.694m) + 33-deg conical afterbody.
-    Max diameter 3.91m (radius 1.955m), base radius 1.5m.
-    Junction fillet R=0.196m, base fillet R=0.231m.
-    Total axial length: 133.5 in = 3.391m (NASA TN D-6028).
+    Source: Fusion 360 DXF export (apollo_2d.dxf) + NASA TN D-6028.
+    Concave spherical heat shield + 33-deg conical afterbody.
+    Total axial length: 3.391m (133.5 in, NASA TN D-6028).
+
+    DXF geometry:
+        - Sphere: Center (5.2366, 0), R=5.2366, arc 160.8-199.2 deg
+        - Cone: 33-deg half-angle, from junction to base
+        - Junction fillet: R=0.196m
+        - Base fillet: R=0.231m
 
     Returns:
         BluntBodyConfig matching Apollo CM dimensions.
     """
     return BluntBodyConfig(
-        R_shield=4.694,
+        R_shield=5.2366,
         R_fillet=0.196,
         cone_half_angle=33.0,
-        max_radius=1.955,
-        base_radius=1.5,
+        max_radius=1.8232,
+        base_radius=0.194,
         base_fillet_radius=0.231,
-        body_length=3.391,  # NASA TN D-6028: 133.5 inches
+        body_length=3.391,
         num_points=600,
     )
 

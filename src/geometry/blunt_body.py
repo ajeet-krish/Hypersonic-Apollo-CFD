@@ -36,6 +36,9 @@ def generate_contour(config: BluntBodyConfig) -> tuple[np.ndarray, np.ndarray]:
 def _contour_simple(config: BluntBodyConfig) -> tuple[np.ndarray, np.ndarray]:
     """Sphere-cone contour (no shoulder fillet), with optional base fillet.
 
+    The heat shield is a CONCAVE spherical dish (sphere center ahead of nose
+    on the axis). The cone tapers inward from junction to base.
+
     Sphere arc: phi from 0 (nose tip) to phi_j (junction).
     Cone:       linear from junction to base.
     Base fillet: circular arc at base edge (optional).
@@ -46,8 +49,6 @@ def _contour_simple(config: BluntBodyConfig) -> tuple[np.ndarray, np.ndarray]:
 
     # Sphere-cone junction angle
     phi_j = math.acos(1.0 - max_r / R)
-    x_j = R * math.sin(phi_j)
-    r_j = max_r
 
     # Cone end
     L = config.computed_body_length
@@ -64,20 +65,24 @@ def _contour_simple(config: BluntBodyConfig) -> tuple[np.ndarray, np.ndarray]:
     else:
         n_base_fillet = 0
 
-    # Sphere arc: phi from 0 to phi_j
+    # Sphere arc: CONCAVE heat shield
+    # Sphere center is at (R, 0) on the axis, ahead of the nose.
+    # The surface curves INWARD from the nose toward the axis.
+    # x = R * (1 - cos(phi)), r = R * sin(phi)
     phi = np.linspace(0, phi_j, n_sphere)
-    x_sphere = R * np.sin(phi)
-    r_sphere = R * (1.0 - np.cos(phi))
+    x_sphere = R * (1.0 - np.cos(phi))
+    r_sphere = R * np.sin(phi)
 
-    # Cone: from (x_j, r_j) to base (tapers inward)
+    # Cone: from junction to base (tapers inward)
+    x_j = x_sphere[-1]
+    r_j = r_sphere[-1]
+
     x_cone_end = L - Rbf if Rbf > 0 else L
     x_cone = np.linspace(x_j, x_cone_end, n_cone)
     r_cone = r_j + (config.base_radius - r_j) * (x_cone - x_j) / (x_cone_end - x_j)
 
     # Base fillet: circular arc from cone end to base
     if Rbf > 0 and n_base_fillet > 0:
-        # Fillet center is at (x_cone_end, base_radius + Rbf)
-        # Arc goes from angle -pi/2 (cone end) to 0 (base edge)
         x_fc = x_cone_end
         r_fc = config.base_radius + Rbf
         alpha = np.linspace(-math.pi / 2, 0, n_base_fillet)
@@ -97,12 +102,14 @@ def _contour_simple(config: BluntBodyConfig) -> tuple[np.ndarray, np.ndarray]:
 def _contour_with_fillet(config: BluntBodyConfig) -> tuple[np.ndarray, np.ndarray]:
     """Sphere + toroidal fillet + cone + base fillet contour.
 
-    The fillet is a circular arc of radius R_fillet whose center lies
-    on the line tangent to both the sphere and the cone at their
-    respective contact points.
+    The heat shield is a CONCAVE spherical dish (sphere center ahead of nose).
+    The fillet blends the sphere to the cone. The cone tapers inward.
+    The base fillet rounds the base edge.
 
-    Fillet arc angles (measured from vertical at fillet center):
-        alpha goes from phi_sf (sphere tangent) to theta (cone tangent).
+    Sphere arc: phi from 0 (nose tip) to phi_sf (sphere-fillet junction).
+    Fillet arc: circular arc from sphere tangent to cone tangent.
+    Cone:       linear from fillet-cone junction to base.
+    Base fillet: circular arc at base edge (optional).
     """
     R = config.R_shield
     Rf = config.R_fillet
@@ -113,9 +120,11 @@ def _contour_with_fillet(config: BluntBodyConfig) -> tuple[np.ndarray, np.ndarra
     cos_phi = (R + Rf - max_r) / (R + Rf)
     phi_sf = math.acos(max(-1.0, min(1.0, cos_phi)))
 
-    # Fillet center
-    x_f = (R - Rf) * math.sin(phi_sf)
-    r_f = R - (R + Rf) * math.cos(phi_sf)
+    # Fillet center (on the axis, ahead of nose)
+    # For concave sphere: center at (R, 0)
+    # Fillet center is at distance (R + Rf) from sphere center along the normal
+    x_f = R - (R + Rf) * math.cos(phi_sf)
+    r_f = (R + Rf) * math.sin(phi_sf)
 
     # Fillet-cone junction (cone tangent point)
     x_tc = x_f + Rf * math.sin(theta)
@@ -137,12 +146,12 @@ def _contour_with_fillet(config: BluntBodyConfig) -> tuple[np.ndarray, np.ndarra
         n_base_fillet = 0
         n_cone = config.num_points - n_sphere - n_fillet
 
-    # Sphere arc: phi from 0 to phi_sf
+    # Sphere arc: CONCAVE heat shield
     phi = np.linspace(0, phi_sf, n_sphere)
-    x_sphere = R * np.sin(phi)
-    r_sphere = R * (1.0 - np.cos(phi))
+    x_sphere = R * (1.0 - np.cos(phi))
+    r_sphere = R * np.sin(phi)
 
-    # Fillet arc: alpha from phi_sf down to theta
+    # Fillet arc: from sphere tangent to cone tangent
     alpha = np.linspace(phi_sf, theta, n_fillet)
     x_fillet = x_f + Rf * np.sin(alpha)
     r_fillet_curve = r_f + Rf * np.cos(alpha)
