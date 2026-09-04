@@ -3,13 +3,23 @@
 Runs SU2_CFD as a subprocess, parses convergence history, and extracts
 stagnation-point values from the solution VTU file.
 """
+from __future__ import annotations
+
+import copy
 import logging
+import re
+import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .config import get_su2_binary
 from .vtu_parser import extract_stagnation_values, parse_vtu
+
+if TYPE_CHECKING:
+    from .convergence import ConvergenceStrategy
+    from .config import SU2HypersonicConfig
 
 logger = logging.getLogger(__name__)
 
@@ -266,3 +276,132 @@ class SU2Solver:
             return float(history[-1][rho_key])
         except (ValueError, KeyError):
             return 0.0
+
+    def run_stages(
+        self,
+        strategy: ConvergenceStrategy,
+        base_config: SU2HypersonicConfig,
+        workdir: Path,
+        mesh_filename: str = "mesh.su2",
+    ) -> SU2Results:
+        """Execute a multi-stage convergence strategy.
+
+        Runs each stage sequentially, using the previous stage's restart file
+        as the initial condition for the next stage.
+
+        Args:
+            strategy: Multi-stage convergence strategy to execute.
+            base_config: Base SU2 configuration (freestream, wall, gas, etc.).
+            workdir: Working directory for simulation files.
+            mesh_filename: Name of the .su2 mesh file.
+
+        Returns:
+            Results from the final stage.
+        """
+        workdir.mkdir(parents=True, exist_ok=True)
+        final_results = SU2Results()
+
+        for i, stage in enumerate(strategy.stages):
+            is_first = i == 0
+            stage_num = i + 1
+            total = len(strategy.stages)
+
+            logger.info(
+                "Stage %d/%d: %s (M=%.1f, CFL=%.4f, iters=%d)",
+                stage_num, total, stage.name, stage.mach,
+                stage.cfl, stage.iterations,
+            )
+
+            # Build stage config from base
+            cfg = copy.deepcopy(base_config)
+            cfg.mach = stage.mach
+            cfg.cfl_number = stage.cfl
+            cfg.iterations = stage.iterations
+            cfg.muscl = stage.muscl
+            cfg.linear_solver = stage.linear_solver
+            cfg.linear_solver_error = stage.linear_solver_error
+            cfg.linear_solver_iter = stage.linear_solver_iter
+            cfg.cfl_adapt_min = stage.cfl_adapt_min
+            cfg.cfl_adapt_max = stage.cfl_adapt_max
+            cfg.cfl_adapt_decrease = stage.cfl_adapt_decrease
+            cfg.cfl_adapt_increase = stage.cfl_adapt_increase
+
+            # Enable restart from previous stage (not the first stage)
+            if not is_first:
+                restart_file = self._find_restart_file(workdir)
+                if restart_file is None:
+                    logger.warning(
+                        "No restart file found after stage %d. "
+                        "Continuing without restart.",
+                        stage_num - 1,
+                    )
+                else:
+                    # Copy restart to solution.dat for SU2 to read
+                    solution_path = workdir / "solution.dat"
+                    shutil.copy2(restart_file, solution_path)
+                    cfg = cfg.with_restart(Path("solution.dat"))
+                    logger.info(
+                        "Restart from %s (copied to solution.dat)",
+                        restart_file.name,
+                    )
+
+            # Only output RESTART files (not PARAVIEW) for intermediate stages
+            if not is_first:
+                cfg.output_files = ("RESTART",)
+            else:
+                cfg.output_files = ("RESTART",)
+
+            # Write config and run
+            cfg_path = cfg.write(workdir, mesh_filename=mesh_filename)
+            logger.info("Config: %s", cfg_path)
+
+            results = self.run(cfg_path, workdir, timeout=7200)
+
+            logger.info(
+                "Stage %d complete: %d iters, drop=%.2f orders, "
+                "final_res=%.2f, converged=%s",
+                stage_num, results.iterations, results.residual_drop,
+                results.final_residual, results.converged,
+            )
+
+            if not results.converged:
+                logger.warning(
+                    "Stage %d (%s) did not converge. "
+                    "Continuing to next stage with partial solution.",
+                    stage_num, stage.name,
+                )
+
+            final_results = results
+
+        return final_results
+
+    @staticmethod
+    def _find_restart_file(workdir: Path) -> Path | None:
+        """Find the latest SU2 restart file in the working directory.
+
+        SU2 v8.x names restart files as 'restart.dat' (or flow_restart_XXX.dat
+        in older versions).
+
+        Args:
+            workdir: Directory to search.
+
+        Returns:
+            Path to the restart file, or None if not found.
+        """
+        # Try SU2 v8.x naming first: restart.dat
+        restart_v8 = workdir / "restart.dat"
+        if restart_v8.exists():
+            return restart_v8
+
+        # Fallback: flow_restart_000XXX.dat (older SU2 versions)
+        restart_files = list(workdir.glob("flow_restart_*.dat"))
+        if not restart_files:
+            return None
+
+        # Sort by iteration number (the numeric part of the filename)
+        def _iter_num(p: Path) -> int:
+            match = re.search(r"flow_restart_(\d+)\.dat", p.name)
+            return int(match.group(1)) if match else 0
+
+        restart_files.sort(key=_iter_num)
+        return restart_files[-1]

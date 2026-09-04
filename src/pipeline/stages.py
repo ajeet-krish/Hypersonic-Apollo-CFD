@@ -283,6 +283,18 @@ def run_su2_stage(config: CaseConfig) -> int:
 
     solver = SU2Solver()
 
+    # Use explicit ConvergenceStrategy if provided
+    if config.convergence_strategy is not None:
+        from cfd.convergence import ConvergenceStrategy
+
+        strategy = config.convergence_strategy
+        print(f"  Using explicit ConvergenceStrategy: {len(strategy.stages)} stages")
+        for i, stage in enumerate(strategy.stages):
+            print(f"    {i + 1}. {stage.name} (M={stage.mach}, "
+                  f"CFL={stage.cfl}, iters={stage.iterations})")
+        results = solver.run_stages(strategy, su2_config, su2_dir, mesh_filename)
+        return _report_and_save(results, su2_config, su2_dir, config)
+
     # Dispatch to strategy
     if config.su2_strategy == "euler-rans":
         return _run_euler_rans(
@@ -413,60 +425,22 @@ def _run_mach_ramp(
     mesh_filename: str,
     config: CaseConfig,
 ) -> int:
-    """Mach ramping strategy with first-order RANS staging.
+    """Mach ramping strategy using ConvergenceStrategy for staged solves.
 
-    Stage 1: First-order RANS at lower Mach (e.g. M=5) to converge.
-    Stage 2: Second-order RANS restart at target Mach from M=5 solution.
+    Uses ConvergenceStrategy.for_mach() to automatically determine the
+    appropriate number of ramp stages, then executes them sequentially
+    via solver.run_stages().
     """
-    ramp_mach = config.su2_mach_ramp_start
+    from cfd.convergence import ConvergenceStrategy
 
-    # --- Stage 1: First-order RANS at ramp Mach ---
-    print(f"\n  === Stage 1: First-order RANS at M={ramp_mach} ===")
-    fo_config = su2_config.with_mach(ramp_mach).as_first_order_rans()
-    fo_config.iterations = config.su2_euler_iterations
-    ramp_cfl = min(config.su2_cfl, 0.01)
-    fo_config = fo_config.with_cfl(ramp_cfl)
-    fo_config = fo_config.with_cfl_adapt(
-        cfl_min=0.005, cfl_max=2.0, decrease=0.5, increase=10.0,
-    )
-    fo_config.linear_solver = "BCGSTAB"
-    fo_config.linear_solver_error = 1e-2
-    fo_config.linear_solver_iter = 20
+    strategy = ConvergenceStrategy.for_mach(config.mach)
+    print(f"  Strategy: {len(strategy.stages)} stages")
+    for i, stage in enumerate(strategy.stages):
+        print(f"    {i + 1}. {stage.name} (M={stage.mach}, "
+              f"CFL={stage.cfl}, iters={stage.iterations})")
 
-    cfg_path = fo_config.write(su2_dir, mesh_filename=mesh_filename)
-    print(f"  Config: {cfg_path}")
-
-    fo_results = solver.run(cfg_path, su2_dir, timeout=3600)
-    print(f"  First-order M={ramp_mach}: {fo_results.iterations} iters, "
-          f"drop={fo_results.residual_drop:.2f}")
-
-    restart_file = _find_restart_file(su2_dir)
-    if restart_file is None:
-        print(f"  ERROR: No restart file found after first-order M={ramp_mach}.")
-        return 1
-
-    # --- Stage 2: Second-order RANS at target Mach ---
-    print(f"\n  === Stage 2: Continued RANS at M={config.mach} (target) ===")
-    import shutil
-    shutil.copy2(restart_file, su2_dir / "solution.dat")
-
-    target_config = su2_config.with_restart(Path("solution.dat"))
-    target_config.muscl = False  # Stay first-order for stability
-    target_config.iterations = config.su2_rans_iterations
-    target_cfl = min(config.su2_cfl, 0.01)
-    target_config = target_config.with_cfl(target_cfl)
-    target_config = target_config.with_cfl_adapt(
-        cfl_min=0.005, cfl_max=1.0, decrease=0.5, increase=3.0,
-    )
-    target_config.linear_solver = "BCGSTAB"
-    target_config.linear_solver_error = 1e-4
-    target_config.linear_solver_iter = 40
-
-    cfg_path = target_config.write(su2_dir, mesh_filename=mesh_filename)
-    print(f"  Config: {cfg_path}")
-
-    target_results = solver.run(cfg_path, su2_dir, timeout=7200)
-    return _report_and_save(target_results, target_config, su2_dir, config)
+    results = solver.run_stages(strategy, su2_config, su2_dir, mesh_filename)
+    return _report_and_save(results, su2_config, su2_dir, config)
 
 
 def _find_restart_file(su2_dir: Path) -> Path | None:

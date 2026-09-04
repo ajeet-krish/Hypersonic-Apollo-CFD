@@ -1,9 +1,15 @@
 """Case configuration for the hypersonic blunt body pipeline."""
+from __future__ import annotations
+
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
+from typing import TYPE_CHECKING
 
 from geometry.config import BluntBodyConfig
+
+if TYPE_CHECKING:
+    from cfd.convergence import ConvergenceStrategy
 
 
 class PipelineStage(Enum):
@@ -51,6 +57,7 @@ class CaseConfig:
     su2_euler_iterations: int = 3000
     su2_rans_iterations: int = 10000
     su2_mach_ramp_start: float = 5.0
+    convergence_strategy: ConvergenceStrategy | None = None
 
     @property
     def output_dir(self) -> str:
