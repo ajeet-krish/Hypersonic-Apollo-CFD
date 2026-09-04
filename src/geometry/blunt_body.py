@@ -48,7 +48,8 @@ def _contour_simple(config: BluntBodyConfig) -> tuple[np.ndarray, np.ndarray]:
     max_r = config.max_radius
 
     # Sphere-cone junction angle
-    phi_j = math.acos(1.0 - max_r / R)
+    # For concave sphere (center at (R, 0)): r = R*sin(phi) = max_r
+    phi_j = math.asin(max_r / R)
 
     # Cone end
     L = config.computed_body_length
