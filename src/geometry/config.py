@@ -78,11 +78,11 @@ class BluntBodyConfig:
             # Fillet-cone junction (cone tangent point)
             x_tc = x_f + self.R_fillet * math.sin(theta)
             r_tc = r_f + self.R_fillet * math.cos(theta)
-            return x_tc + (r_tc - self.base_radius) / math.tan(theta)
+            return x_tc + abs(r_tc - self.base_radius) / math.tan(theta)
         else:
             phi_j = math.acos(1.0 - self.max_radius / self.R_shield)
             x_j = self.R_shield * math.sin(phi_j)
-            return x_j + (self.max_radius - self.base_radius) / math.tan(theta)
+            return x_j + abs(self.max_radius - self.base_radius) / math.tan(theta)
 
     @property
     def junction_x(self) -> float:

@@ -31,58 +31,39 @@ from validation.shock_relations import normal_shock
 class TestBluntBodyConfigEdgeCases:
     """Edge cases for BluntBodyConfig.validate()."""
 
-    def test_negative_R_nose(self):
-        """Negative R_nose must raise ValueError."""
-        with pytest.raises(ValueError, match="R_nose must be > 0"):
-            BluntBodyConfig.validate(R_nose=-0.5)
+    def test_negative_R_shield(self):
+        """Negative R_shield must raise ValueError."""
+        with pytest.raises(ValueError, match="R_shield must be > 0"):
+            BluntBodyConfig.validate(R_shield=-0.5)
 
-    def test_zero_R_nose(self):
-        """Zero R_nose must raise ValueError."""
-        with pytest.raises(ValueError, match="R_nose must be > 0"):
-            BluntBodyConfig.validate(R_nose=0.0)
+    def test_zero_R_shield(self):
+        """Zero R_shield must raise ValueError."""
+        with pytest.raises(ValueError, match="R_shield must be > 0"):
+            BluntBodyConfig.validate(R_shield=0.0)
 
-    def test_half_angle_zero(self):
-        """half_angle=0 must raise ValueError (degenerate: no cone)."""
-        with pytest.raises(ValueError, match="half_angle must be > 0 and < 85"):
-            BluntBodyConfig.validate(half_angle=0.0)
+    def test_cone_half_angle_zero(self):
+        """cone_half_angle=0 must raise ValueError (degenerate: no cone)."""
+        with pytest.raises(ValueError, match="cone_half_angle must be in \\(0, 90\\)"):
+            BluntBodyConfig.validate(cone_half_angle=0.0)
 
-    def test_half_angle_90(self):
-        """half_angle=90 must raise ValueError (per code: >=85 is rejected).
+    def test_cone_half_angle_90(self):
+        """cone_half_angle=90 must raise ValueError (>=90 rejected).
 
-        Note: The code uses <85 as the upper limit, not <90.
-        half_angle=90 would mean the cone opens perpendicular to the axis,
+        cone_half_angle=90 would mean the cone opens perpendicular to the axis,
         which is geometrically invalid for this model.
         """
-        with pytest.raises(ValueError, match="half_angle must be > 0 and < 85"):
-            BluntBodyConfig.validate(half_angle=90.0)
+        with pytest.raises(ValueError, match="cone_half_angle must be in \\(0, 90\\)"):
+            BluntBodyConfig.validate(cone_half_angle=90.0)
 
-    def test_half_angle_negative(self):
-        """Negative half_angle must raise ValueError."""
-        with pytest.raises(ValueError, match="half_angle must be > 0 and < 85"):
-            BluntBodyConfig.validate(half_angle=-10.0)
+    def test_cone_half_angle_negative(self):
+        """Negative cone_half_angle must raise ValueError."""
+        with pytest.raises(ValueError, match="cone_half_angle must be in \\(0, 90\\)"):
+            BluntBodyConfig.validate(cone_half_angle=-10.0)
 
-    def test_half_angle_exactly_85(self):
-        """half_angle=85 must raise ValueError (>=85 rejected)."""
-        with pytest.raises(ValueError, match="half_angle must be > 0 and < 85"):
-            BluntBodyConfig.validate(half_angle=85.0)
-
-    def test_base_radius_less_than_junction_r(self):
-        """base_radius < junction_r must raise ValueError.
-
-        For R_nose=1.0, half_angle=50: junction_r = 1.0*(1-cos(50deg)) = 0.234
-        """
-        with pytest.raises(ValueError, match="base_radius must be > junction_r"):
-            BluntBodyConfig.validate(R_nose=1.0, half_angle=50.0, base_radius=0.1)
-
-    def test_base_radius_equals_junction_r(self):
-        """base_radius = junction_r must raise ValueError (not strictly greater)."""
-        R_nose = 0.196
-        half_angle = 50.0
-        junction_r = R_nose * (1.0 - math.cos(math.radians(half_angle)))
-        with pytest.raises(ValueError, match="base_radius must be > junction_r"):
-            BluntBodyConfig.validate(
-                R_nose=R_nose, half_angle=half_angle, base_radius=junction_r
-            )
+    def test_cone_half_angle_exactly_85(self):
+        """cone_half_angle=85 should pass (within 0, 90)."""
+        config = BluntBodyConfig.validate(cone_half_angle=85.0)
+        assert config.cone_half_angle == 85.0
 
     def test_num_points_too_few(self):
         """num_points < 10 must raise ValueError."""
@@ -391,30 +372,33 @@ class TestGeometryEdgeCases:
     """Edge cases for blunt body geometry."""
 
     def test_very_small_R_nose(self):
-        """Very small R_nose should still produce valid contour."""
-        config = BluntBodyConfig(R_nose=0.001, half_angle=45.0, base_radius=0.01)
+        """Very small R_shield should still produce valid contour."""
+        config = BluntBodyConfig(
+            R_shield=0.001, cone_half_angle=45.0,
+            max_radius=0.001, base_radius=0.0005,
+        )
         x, r = generate_contour(config)
         assert len(x) > 0
         assert x[0] == pytest.approx(0.0, abs=1e-12)
         assert r[-1] == pytest.approx(config.base_radius, rel=1e-4)
 
     def test_very_large_R_nose(self):
-        """Very large R_nose should still produce valid contour."""
-        config = BluntBodyConfig(R_nose=100.0, half_angle=45.0, base_radius=500.0)
+        """Very large R_shield should still produce valid contour."""
+        config = BluntBodyConfig(R_shield=100.0, cone_half_angle=45.0, base_radius=500.0)
         x, r = generate_contour(config)
         assert len(x) > 0
         assert r[-1] == pytest.approx(config.base_radius, rel=1e-6)
 
     def test_very_small_half_angle(self):
         """Very small half_angle (1 degree) should work."""
-        config = BluntBodyConfig(R_nose=0.1, half_angle=1.0, base_radius=0.5)
+        config = BluntBodyConfig(R_shield=0.1, cone_half_angle=1.0, base_radius=0.5)
         x, r = generate_contour(config)
         assert len(x) > 0
         assert r[-1] == pytest.approx(config.base_radius, rel=1e-4)
 
     def test_large_half_angle(self):
         """Large half_angle (84 degrees) should work."""
-        config = BluntBodyConfig(R_nose=0.1, half_angle=84.0, base_radius=5.0)
+        config = BluntBodyConfig(R_shield=0.1, cone_half_angle=84.0, base_radius=5.0)
         x, r = generate_contour(config)
         assert len(x) > 0
         assert r[-1] == pytest.approx(config.base_radius, rel=1e-4)

@@ -130,7 +130,7 @@ class TestCaseConfig:
             name="apollo", label="Apollo", preset_fn=apollo_cm,
         )
         body = config.preset_fn()
-        assert body.R_nose == 0.196
+        assert body.R_shield == 4.694
 
     def test_equal_configs(self):
         """Two configs with same params should be equal."""

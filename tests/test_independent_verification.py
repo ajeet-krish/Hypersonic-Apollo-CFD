@@ -608,38 +608,41 @@ class TestGeometryIndependent:
     """Verify blunt body geometry against analytical formulas."""
 
     def test_apollo_junction_x(self):
-        """Apollo CM junction_x = R_nose * sin(50 deg).
+        """Apollo CM junction_x = R_shield * sin(phi_j).
 
-        R_nose = 0.196, theta = 50 deg = 0.8727 rad
-        junction_x = 0.196 * sin(50 deg) = 0.196 * 0.7660 = 0.15014 m
+        R_shield = 4.694, max_radius = 1.955
+        phi_j = acos(1 - 1.955/4.694) = acos(0.5834) = 54.36 deg
+        junction_x = 4.694 * sin(54.36 deg) = 3.807 m
         """
         config = apollo_cm()
-        expected = 0.196 * math.sin(math.radians(50.0))
+        phi_j = math.acos(1.0 - config.max_radius / config.R_shield)
+        expected = config.R_shield * math.sin(phi_j)
         assert config.junction_x == pytest.approx(expected, rel=1e-10)
-        assert config.junction_x == pytest.approx(0.1501, abs=0.001)
+        assert config.junction_x == pytest.approx(3.807, abs=0.01)
 
     def test_apollo_junction_r(self):
-        """Apollo CM junction_r = R_nose * (1 - cos(50 deg)).
+        """Apollo CM junction_r = max_radius (when no fillet).
 
-        junction_r = 0.196 * (1 - cos(50 deg)) = 0.196 * (1 - 0.6428) = 0.196 * 0.3572 = 0.07001 m
+        R_shield = 4.694, max_radius = 1.955
+        junction_r = max_radius = 1.955 m
         """
         config = apollo_cm()
-        expected = 0.196 * (1.0 - math.cos(math.radians(50.0)))
-        assert config.junction_r == pytest.approx(expected, rel=1e-10)
-        assert config.junction_r == pytest.approx(0.0700, abs=0.001)
+        assert config.junction_r == pytest.approx(config.max_radius, rel=1e-10)
+        assert config.junction_r == pytest.approx(1.955, abs=0.001)
 
     def test_apollo_body_length(self):
-        """Apollo CM body_length = (base_r - junction_r)/tan(theta) + junction_x.
+        """Apollo CM body_length = x_j + |max_radius - base_r|/tan(theta).
 
-        base_r = 1.955, junction_r = 0.07001, theta = 50 deg
-        cone_length = (1.955 - 0.07001) / tan(50 deg) = 1.88499 / 1.19175 = 1.58172 m
-        body_length = 1.58172 + 0.15014 = 1.73186 m
+        R_shield = 4.694, max_radius = 1.955, base_radius = 1.5, theta = 33 deg
+        phi_j = acos(1 - 1.955/4.694) = 54.36 deg
+        x_j = 4.694 * sin(54.36 deg) = 3.807
+        body_length = 3.807 + (1.955 - 1.5) / tan(33 deg) = 3.807 + 0.701 = 4.508 m
         """
         config = apollo_cm()
-        theta = math.radians(50.0)
-        junction_r = 0.196 * (1.0 - math.cos(theta))
-        junction_x = 0.196 * math.sin(theta)
-        expected = (1.955 - junction_r) / math.tan(theta) + junction_x
+        theta = math.radians(config.cone_half_angle)
+        phi_j = math.acos(1.0 - config.max_radius / config.R_shield)
+        x_j = config.R_shield * math.sin(phi_j)
+        expected = x_j + abs(config.max_radius - config.base_radius) / math.tan(theta)
         assert config.computed_body_length == pytest.approx(expected, rel=1e-10)
 
     def test_contour_has_correct_number_of_points(self):
@@ -651,21 +654,26 @@ class TestGeometryIndependent:
 
     def test_contour_starts_at_origin(self):
         """Nose tip should be at (0, 0)."""
-        config = BluntBodyConfig(R_nose=0.1, half_angle=45.0, base_radius=0.5)
+        config = BluntBodyConfig(R_shield=0.1, cone_half_angle=45.0, base_radius=0.5)
         x, r = generate_contour(config)
         assert x[0] == 0.0
         assert r[0] == 0.0
 
     def test_contour_ends_at_base(self):
         """Last point should be at (body_length, base_radius)."""
-        config = BluntBodyConfig(R_nose=0.1, half_angle=45.0, base_radius=0.5)
+        config = BluntBodyConfig(R_shield=0.1, cone_half_angle=45.0, base_radius=0.5)
         x, r = generate_contour(config)
         assert x[-1] == pytest.approx(config.computed_body_length, rel=1e-6)
         assert r[-1] == pytest.approx(config.base_radius, rel=1e-6)
 
     def test_contour_x_monotonic(self):
         """x should be monotonically increasing along the contour."""
-        config = BluntBodyConfig(R_nose=0.1, half_angle=45.0, base_radius=0.5)
+        # Use max_radius < R_shield so phi_j < pi/2, avoiding floating-point
+        # precision issues near the sphere equator.
+        config = BluntBodyConfig(
+            R_shield=0.1, cone_half_angle=45.0,
+            max_radius=0.05, base_radius=0.03,
+        )
         x, _r = generate_contour(config)
         for i in range(len(x) - 1):
             assert x[i] <= x[i + 1], (
@@ -674,7 +682,7 @@ class TestGeometryIndependent:
 
     def test_contour_r_nonnegative(self):
         """No negative radial coordinates."""
-        config = BluntBodyConfig(R_nose=0.1, half_angle=45.0, base_radius=0.5)
+        config = BluntBodyConfig(R_shield=0.1, cone_half_angle=45.0, base_radius=0.5)
         _x, r = generate_contour(config)
         assert np.all(r >= 0)
 

@@ -198,8 +198,8 @@ class TestPlotBody3d:
         from viz.geometry_3d import plot_body_3d
 
         config = BluntBodyConfig(
-            R_nose=0.1,
-            half_angle=45.0,
+            R_shield=0.1,
+            cone_half_angle=45.0,
             base_radius=0.5,
             num_points=100,
         )
