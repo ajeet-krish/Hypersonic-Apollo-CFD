@@ -543,6 +543,7 @@ def run_postprocess_stage(config: CaseConfig) -> int:
         - docs/assets/images/{name}/temperature_contour.png: temperature contour
         - docs/assets/images/{name}/heat_flux.png: surface heat flux
         - docs/assets/images/{name}/shock_structure.png: shock structure
+        - docs/assets/images/{name}/schlieren.png: Schlieren density gradient
         - docs/assets/images/{name}/shock_standoff.png: standoff measurement
         - docs/assets/images/{name}/body_3d.png: 3D revolved body
 
@@ -565,7 +566,11 @@ def run_postprocess_stage(config: CaseConfig) -> int:
     )
     from viz.geometry_3d import plot_body_3d
     from viz.heat_flux import plot_surface_heat_flux
-    from viz.shock import plot_shock_standoff_measurement, plot_shock_structure
+    from viz.shock import (
+        plot_schlieren,
+        plot_shock_standoff_measurement,
+        plot_shock_structure,
+    )
 
     # Load body contour
     body_config = config.preset_fn()
@@ -660,7 +665,19 @@ def run_postprocess_stage(config: CaseConfig) -> int:
     except (OSError, RuntimeError) as exc:
         print(f"  Shock structure FAILED: {exc}")
 
-    # 6. Shock standoff measurement
+    # 6. Schlieren visualization
+    n_plots += 1
+    try:
+        path = plot_schlieren(
+            data, images_dir / "schlieren.png",
+            body_contour=(x_body, r_body),
+        )
+        print(f"  Plot: {path}")
+        n_ok += 1
+    except (OSError, RuntimeError) as exc:
+        print(f"  Schlieren plot FAILED: {exc}")
+
+    # 7. Shock standoff measurement
     n_plots += 1
     try:
         from cfd.postprocess import measure_shock_standoff_r_nose
@@ -673,7 +690,7 @@ def run_postprocess_stage(config: CaseConfig) -> int:
     except (OSError, RuntimeError) as exc:
         print(f"  Shock standoff plot FAILED: {exc}")
 
-    # 7. 3D body
+    # 8. 3D body
     n_plots += 1
     try:
         path = plot_body_3d(body_config, images_dir / "body_3d.png")
