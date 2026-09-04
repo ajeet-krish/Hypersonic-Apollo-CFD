@@ -219,7 +219,6 @@ CFL_ADAPT_PARAM= {cfl_adapt_params}
 CONV_FIELD= RMS_DENSITY
 CONV_RESIDUAL_MINVAL= {self.conv_residual_minval}
 CONV_STARTITER= 100
-CONV_CAUCHY_EPS= 1E-6
 
 % -------------------- REFERENCE VALUES ------------------------
 REF_AREA= {self.ref_area}

@@ -41,7 +41,7 @@ class TestPresets:
 
     def test_generic_custom(self):
         """Generic preset should accept custom parameters."""
-        config = generic(R_nose=0.2, half_angle=60.0, base_radius=1.0)
+        config = generic(R_shield=0.2, cone_half_angle=60.0, base_radius=1.0)
         assert config.R_nose == 0.2
         assert config.half_angle == 60.0
         assert config.base_radius == 1.0

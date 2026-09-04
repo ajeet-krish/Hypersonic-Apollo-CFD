@@ -75,7 +75,7 @@ def main() -> int:
         mesh_tier=args.tier,
         su2_iterations=args.iterations,
         su2_cfl=args.cfl,
-        su2_strategy="mach-ramp",
+        su2_strategy="euler-rans",
         su2_euler_iterations=args.euler_iterations,
         su2_rans_iterations=args.iterations,
         su2_mach_ramp_start=args.mach_ramp_start,

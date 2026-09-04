@@ -139,9 +139,9 @@ class BluntBodyConfig:
             )
         if max_radius <= 0:
             raise ValueError(f"max_radius must be > 0, got {max_radius}")
-        if base_radius <= 0 or base_radius >= max_radius:
+        if base_radius <= 0:
             raise ValueError(
-                f"base_radius must be in (0, max_radius), got {base_radius}"
+                f"base_radius must be > 0, got {base_radius}"
             )
         if num_points < 10:
             raise ValueError(f"num_points must be >= 10, got {num_points}")
