@@ -136,7 +136,7 @@ class TestSU2HypersonicConfigWrite:
             "MARKER_SYM= ( sym )",
             "CONV_NUM_METHOD_FLOW= AUSM",
             "MUSCL_FLOW= YES",
-            "SLOPE_LIMITER_FLOW= MINMOD",
+            "SLOPE_LIMITER_FLOW= VENKATAKRISHNAN",
             "ENTROPY_FIX_COEFF= 0.1",
             "CONV_NUM_METHOD_TURB= SCALAR_UPWIND",
             "MUSCL_TURB= NO",
@@ -588,7 +588,7 @@ class TestCfgFileIntegrity:
                 if value in ("YES", "NO", "SI", "RANS", "SA", "ROE",
                              "AUSM", "AUSMPLUS",
                              "EULER_IMPLICIT", "FGMRES", "BCGSTAB", "ILU",
-                             "MINMOD",
+                             "MINMOD",  # legacy skip entry
                              "VENKATAKRISHNAN_WANG", "VENKATAKRISHNAN",
                              "SCALAR_UPWIND", "DIRECT", "RMS_DENSITY",
                              "SU2"):

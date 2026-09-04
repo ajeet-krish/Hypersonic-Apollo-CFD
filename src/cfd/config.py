@@ -80,7 +80,7 @@ class SU2HypersonicConfig:
     conv_residual_minval: float = -6.0
     conv_num_method: str = "AUSM"
     muscl: bool = True
-    limiter: str = "MINMOD"
+    limiter: str = "VENKATAKRISHNAN"
     entropy_fix_coeff: float = 0.1
     linear_solver: str = "BCGSTAB"
     linear_solver_prec: str = "ILU"
