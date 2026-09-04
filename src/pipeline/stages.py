@@ -185,10 +185,13 @@ def run_mesh_stage(config: CaseConfig) -> int:
     print(f"  Tier: {config.mesh_tier}")
     print(f"  Target cells: ~{mesh_config.estimated_cell_count:,}")
     print(f"  Shock refinement: {mesh_config.shock_refinement}")
+    if config.aoa != 0.0:
+        print(f"  Angle of attack: {config.aoa} deg (full2d forced)")
 
     try:
         generate_body_mesh(
             body_config, mesh_config, config.mach, mesh_path,
+            aoa=config.aoa,
         )
     except (RuntimeError, OSError) as exc:
         print(f"  Mesh generation FAILED: {exc}")
@@ -263,6 +266,11 @@ def run_su2_stage(config: CaseConfig) -> int:
         cfl_number=config.su2_cfl,
         iterations=config.su2_iterations,
     )
+
+    # Apply angle of attack and full2d when aoa is nonzero
+    if config.aoa != 0.0:
+        su2_config = su2_config.as_full2d().with_aoa(config.aoa)
+        print(f"  AoA: {config.aoa} deg, full2d mode")
 
     # Output directory
     su2_dir = Path(config.output_dir) / "su2"

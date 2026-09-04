@@ -272,6 +272,19 @@ MESH_FORMAT= SU2
         new.mach = mach
         return new
 
+    def with_aoa(self, aoa: float) -> "SU2HypersonicConfig":
+        """Return a copy with angle of attack (degrees).
+
+        Args:
+            aoa: Angle of attack in degrees (positive = nose up).
+
+        Returns:
+            New SU2HypersonicConfig with updated AoA.
+        """
+        new = copy.deepcopy(self)
+        new.aoa = aoa
+        return new
+
     def with_wall_temperature(self, t_wall: float) -> "SU2HypersonicConfig":
         """Return a copy with a different wall temperature.
 

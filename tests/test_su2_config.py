@@ -518,6 +518,47 @@ class TestSU2HypersonicConfigAsFull2d:
         content = cfg_path.read_text()
         assert "MARKER_SYM" in content
 
+    def test_full2d_with_aoa_combined(self, tmp_path):
+        config = SU2HypersonicConfig().as_full2d().with_aoa(20.0)
+        assert config.axisymmetric is False
+        assert config.aoa == 20.0
+        cfg_path = config.write(tmp_path)
+        content = cfg_path.read_text()
+        assert "AXISYMMETRIC= NO" in content
+        assert "AOA= 20.0" in content
+        assert "MARKER_SYM" not in content
+
+
+class TestSU2HypersonicConfigWithAoa:
+    """Tests for with_aoa() method."""
+
+    def test_returns_deep_copy(self):
+        original = SU2HypersonicConfig()
+        copy = original.with_aoa(15.0)
+        assert copy is not original
+
+    def test_sets_aoa(self):
+        original = SU2HypersonicConfig()
+        copy = original.with_aoa(15.0)
+        assert copy.aoa == 15.0
+
+    def test_original_unchanged(self):
+        original = SU2HypersonicConfig()
+        _ = original.with_aoa(15.0)
+        assert original.aoa == 0.0
+
+    def test_cfg_contains_aoa(self, tmp_path):
+        config = SU2HypersonicConfig().with_aoa(15.0)
+        cfg_path = config.write(tmp_path)
+        content = cfg_path.read_text()
+        assert "AOA= 15.0" in content
+
+    def test_preserves_other_fields(self):
+        original = SU2HypersonicConfig(mach=10.0, wall_temperature=3000.0)
+        copy = original.with_aoa(10.0)
+        assert copy.mach == 10.0
+        assert copy.wall_temperature == 3000.0
+
 
 class TestCfgFileIntegrity:
     """Tests for overall config file integrity."""

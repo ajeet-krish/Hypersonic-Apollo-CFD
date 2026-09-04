@@ -13,6 +13,9 @@ geometrically-spaced distances.  Quads connect consecutive layers.
 This bypasses the gmsh BoundaryLayer field and transfinite surface,
 both of which are non-functional in gmsh 4.15.2.
 
+When ``aoa != 0`` the domain is forced to full2d.
+Angle of attack is handled by SU2 (freestream rotation), not body rotation.
+
 References:
     Billig, F. S. (1967), "Shock-Wave Shapes Around Unswept- and
     Swept-Nose Bodies," J. Spacecraft & Rockets, 4(6), 822-823.
@@ -219,6 +222,7 @@ def generate_body_mesh(
     mesh_config: MeshConfig,
     mach: float,
     output_path: Path,
+    aoa: float = 0.0,
 ) -> Path:
     """Generate a 2D Gmsh mesh for a spherically-blunted cone.
 
@@ -231,6 +235,10 @@ def generate_body_mesh(
         - Sphere-cone junction refinement
         - Shock-layer refinement (full2d only)
 
+    When *aoa* != 0 the domain is forced to full2d regardless of the
+    ``mesh_config.domain_type`` setting.  The angle of attack itself is
+    applied by SU2 (freestream rotation), not by rotating the body mesh.
+
     The boundary layer is built by placing BL nodes at explicit positions
     along the outward normal from each body contour point.  Each axial
     segment gets a column of quad elements with geometric growth from
@@ -241,6 +249,7 @@ def generate_body_mesh(
         mesh_config: Mesh refinement configuration.
         mach: Freestream Mach number (for shock refinement).
         output_path: Output .su2 mesh file path.
+        aoa: Angle of attack in degrees (default 0.0).
 
     Returns:
         Path to the generated .su2 mesh file.
@@ -252,6 +261,19 @@ def generate_body_mesh(
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # --- Angle of attack handling ---
+    if aoa != 0.0:
+        if mesh_config.domain_type == "axisymmetric":
+            print(
+                f"  WARNING: axisymmetric domain requested but aoa={aoa} deg; "
+                "forcing full2d"
+            )
+        # Force full2d when aoa is nonzero
+        mesh_config = MeshConfig.for_tier(
+            mesh_config.mesh_tier,
+            domain_type="full2d",
+        )
 
     try:
         gmsh.initialize()

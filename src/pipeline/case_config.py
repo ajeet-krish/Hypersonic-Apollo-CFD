@@ -35,6 +35,8 @@ class CaseConfig:
         preset_fn: Callable returning BluntBodyConfig
         mach: Freestream Mach number
         altitude: Flight altitude (m)
+        aoa: Angle of attack in degrees (default 0.0). When nonzero the
+            mesh domain is forced to full2d and the body contour is rotated.
         gamma: Ratio of specific heats
         mesh_tier: Mesh refinement tier
         su2_iterations: SU2 max iterations (used when strategy is 'direct')
@@ -49,6 +51,7 @@ class CaseConfig:
     preset_fn: Callable[[], BluntBodyConfig]
     mach: float = 8.0
     altitude: float = 30000.0
+    aoa: float = 0.0
     gamma: float = 1.4
     mesh_tier: str = "standard"
     su2_iterations: int = 5000
