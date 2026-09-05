@@ -118,12 +118,13 @@ def _contour_with_fillet(config: BluntBodyConfig) -> tuple[np.ndarray, np.ndarra
     max_r = config.max_radius
 
     # Sphere-fillet junction angle
-    cos_phi = (R + Rf - max_r) / (R + Rf)
-    phi_sf = math.acos(max(-1.0, min(1.0, cos_phi)))
+    # For concave sphere (center at (R, 0)): r = R*sin(phi)
+    # At junction: r = max_r, so phi_sf = asin(max_r / R)
+    phi_sf = math.asin(max_r / R)
 
-    # Fillet center (on the axis, ahead of nose)
-    # For concave sphere: center at (R, 0)
-    # Fillet center is at distance (R + Rf) from sphere center along the normal
+    # Fillet center: offset from sphere surface along outward normal
+    # The fillet center is at distance (R + Rf) from sphere center along
+    # the radial direction at phi_sf
     x_f = R - (R + Rf) * math.cos(phi_sf)
     r_f = (R + Rf) * math.sin(phi_sf)
 
@@ -173,7 +174,6 @@ def _contour_with_fillet(config: BluntBodyConfig) -> tuple[np.ndarray, np.ndarra
         x = np.concatenate([x_sphere, x_fillet[1:], x_cone[1:], x_base_fillet[1:]])
         r = np.concatenate([r_sphere, r_fillet_curve[1:], r_cone[1:], r_base_fillet[1:]])
     else:
-        # Concatenate (skip duplicate junction points)
         x = np.concatenate([x_sphere, x_fillet[1:], x_cone[1:]])
         r = np.concatenate([r_sphere, r_fillet_curve[1:], r_cone[1:]])
 

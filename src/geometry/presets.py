@@ -21,13 +21,13 @@ def apollo_cm() -> BluntBodyConfig:
         BluntBodyConfig matching Apollo CM dimensions.
     """
     return BluntBodyConfig(
-        R_shield=5.2366,
+        R_shield=4.694,
         R_fillet=0.196,
         cone_half_angle=33.0,
-        max_radius=1.8232,
-        base_radius=0.194,
+        max_radius=1.956,
+        base_radius=0.03,
         base_fillet_radius=0.231,
-        body_length=3.391,
+        body_length=3.3918,
         num_points=600,
     )
 

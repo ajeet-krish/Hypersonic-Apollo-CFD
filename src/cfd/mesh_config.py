@@ -10,6 +10,40 @@ _TIER_MULTIPLIERS: dict[str, float] = {
 
 
 @dataclass(frozen=True)
+class OGridDomain:
+    """Parameters for an elliptical (O-grid) farfield boundary.
+
+    The domain is an ellipse centered at (center_x, center_r) with
+    semi-axes semi_major (axial) and semi_minor (radial).  The body
+    sits inside this ellipse, and the mesh fills the annular region
+    between the body contour (plus BL) and the ellipse.
+
+    Attributes:
+        center_x: Axial center of the ellipse (m).
+        center_r: Radial center of the ellipse (m), typically 0 (symmetry axis).
+        semi_major: Axial semi-axis (half-width) of the ellipse (m).
+        semi_minor: Radial semi-axis (half-height) of the ellipse (m).
+        x_nose: Axial coordinate of the body nose tip (m).
+        x_base: Axial coordinate of the body base (m).
+        r_base: Radial coordinate of the body base (m).
+        x_min: Leftmost axial extent of the ellipse (m).
+        x_max: Rightmost axial extent of the ellipse (m).
+        r_max: Maximum radial extent of the ellipse (m).
+    """
+
+    center_x: float
+    center_r: float
+    semi_major: float
+    semi_minor: float
+    x_nose: float
+    x_base: float
+    r_base: float
+    x_min: float
+    x_max: float
+    r_max: float
+
+
+@dataclass(frozen=True)
 class MeshConfig:
     """Configuration for Gmsh boundary-layer mesh on a spherically-blunted cone.
 
@@ -25,6 +59,9 @@ class MeshConfig:
         farfield_distance: Farfield boundary distance in x * R_nose units.
         mesh_tier: Refinement tier (draft, standard, high).
         domain_type: Mesh domain type ('axisymmetric' or 'full2d').
+        upstream_factor: Upstream distance as multiple of R_nose.
+        downstream_factor: Downstream distance as multiple of body diameter.
+        lateral_factor: Lateral distance as multiple of R_nose.
     """
 
     n_bl: int = 50
@@ -38,6 +75,9 @@ class MeshConfig:
     farfield_distance: float = 25.0
     mesh_tier: str = "standard"
     domain_type: str = "axisymmetric"
+    upstream_factor: float = 8.0
+    downstream_factor: float = 12.0
+    lateral_factor: float = 8.0
 
     def __post_init__(self) -> None:
         """Validate configuration values after initialization."""
@@ -147,6 +187,9 @@ class MeshConfig:
             farfield_distance=float(overrides.pop("farfield_distance", 25.0)),
             mesh_tier=tier,
             domain_type=str(overrides.pop("domain_type", "axisymmetric")),
+            upstream_factor=float(overrides.pop("upstream_factor", 8.0)),
+            downstream_factor=float(overrides.pop("downstream_factor", 12.0)),
+            lateral_factor=float(overrides.pop("lateral_factor", 8.0)),
         )
 
         # Apply any remaining overrides via replace pattern
@@ -164,6 +207,9 @@ class MeshConfig:
                 "farfield_distance": config.farfield_distance,
                 "mesh_tier": config.mesh_tier,
                 "domain_type": config.domain_type,
+                "upstream_factor": config.upstream_factor,
+                "downstream_factor": config.downstream_factor,
+                "lateral_factor": config.lateral_factor,
             }
             field_dict.update(overrides)  # type: ignore[arg-type]
             config = cls(**field_dict)
