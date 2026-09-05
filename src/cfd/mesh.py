@@ -787,6 +787,195 @@ def generate_mesh_from_dxf(
     return output_path
 
 
+def generate_fullview_mesh(
+    dxf_path: Path,
+    output_path: Path,
+) -> Path:
+    """Generate a full-view 2D mesh showing the complete Apollo CM body.
+
+    Creates a rectangular farfield domain with the full body (upper and
+    lower halves) centered inside.  The DXF contour provides the upper
+    half only; the lower half is created by mirroring (negate r, reverse
+    order).  The body is positioned closer to the entrance so the wake
+    region downstream is well-resolved.
+
+    Domain sizing:
+        Upstream:   5 * R_nose = 23.47 m (from nose to left boundary)
+        Downstream: 15 * body_length = 50.88 m (from base to right boundary)
+        Lateral:    5 * max_radius = 9.78 m (above and below body)
+
+    Boundary conditions:
+        - body:  entire closed body surface (upper + lower halves)
+        - farfield: all four edges of the rectangular domain
+        - fluid: the 2D surface between body and farfield
+        - NO sym marker (full 2D, not axisymmetric)
+
+    Args:
+        dxf_path: Path to the ``.npz`` file containing contour arrays
+            with keys ``x`` and ``r`` (upper half only).
+        output_path: Output ``.su2`` mesh file path.
+
+    Returns:
+        Path to the generated ``.su2`` mesh file.
+
+    Raises:
+        RuntimeError: If mesh generation fails.
+    """
+    import gmsh
+
+    # --- Apollo CM geometry parameters ---
+    R_nose = 4.694  # m (heat shield sphere radius)
+    body_length = 3.3918  # m
+    max_radius = 1.956  # m (half-height)
+
+    # --- Domain sizing (5x upstream, 15x downstream, 5x lateral) ---
+    upstream = 5.0 * R_nose  # 23.47 m from nose to left boundary
+    downstream = 15.0 * body_length  # 50.88 m from base to right boundary
+    lateral = 5.0 * max_radius  # 9.78 m above and below body
+
+    # --- Body centered in domain ---
+    x_center = body_length / 2.0  # 1.696 m
+    y_center = 0.0
+
+    x_min = x_center - upstream  # -21.77 m
+    x_max = x_center + body_length + downstream  # 52.58 m
+    y_min = y_center - lateral  # -9.78 m
+    y_max = y_center + lateral  # 9.78 m
+
+    # --- Load body contour from DXF (upper half only) ---
+    data = np.load(dxf_path)
+    x_upper: np.ndarray = data["x"]
+    r_upper: np.ndarray = data["r"]
+
+    # Mirror to create lower half: negate r, reverse order
+    x_lower = x_upper[::-1]
+    r_lower = -r_upper[::-1]
+
+    # Concatenate upper + lower to form full closed body contour
+    x_full = np.concatenate([x_upper, x_lower[1:]])
+    r_full = np.concatenate([r_upper, r_lower[1:]])
+    n_body = len(x_full)
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        gmsh.initialize()
+        gmsh.option.setNumber("General.Terminal", 0)
+        gmsh.model.add("fullview_mesh")
+
+        # ============================================================
+        #  BODY CONTOUR (closed loop: upper half -> base close -> lower half -> nose)
+        # ============================================================
+        body_pts: list[int] = []
+        for i in range(n_body):
+            pt = gmsh.model.geo.addPoint(
+                float(x_full[i]), float(r_full[i]), 0,
+            )
+            body_pts.append(pt)
+
+        # Upper body curves (nose -> base, left to right)
+        upper_body_lines: list[int] = []
+        for i in range(len(x_upper) - 1):
+            line = gmsh.model.geo.addLine(body_pts[i], body_pts[i + 1])
+            upper_body_lines.append(line)
+
+        # Base closing line: upper base point -> lower base point
+        base_upper_idx = len(x_upper) - 1  # index 199
+        base_lower_idx = len(x_upper)      # index 200
+        base_close = gmsh.model.geo.addLine(
+            body_pts[base_upper_idx], body_pts[base_lower_idx],
+        )
+
+        # Lower body curves (base -> nose, right to left)
+        lower_body_lines: list[int] = []
+        for i in range(base_lower_idx, n_body - 1):
+            line = gmsh.model.geo.addLine(body_pts[i], body_pts[i + 1])
+            lower_body_lines.append(line)
+
+        # Nose closing line: last lower point back to nose
+        nose_close = gmsh.model.geo.addLine(body_pts[-1], body_pts[0])
+
+        # ============================================================
+        #  RECTANGULAR FARFIELD (4 corners)
+        # ============================================================
+        far_bl = gmsh.model.geo.addPoint(x_min, y_min, 0)  # bottom-left
+        far_br = gmsh.model.geo.addPoint(x_max, y_min, 0)  # bottom-right
+        far_tr = gmsh.model.geo.addPoint(x_max, y_max, 0)  # top-right
+        far_tl = gmsh.model.geo.addPoint(x_min, y_max, 0)  # top-left
+
+        # Rectangle edges (CCW order)
+        rect_left = gmsh.model.geo.addLine(far_tl, far_bl)    # top-left -> bottom-left
+        rect_bottom = gmsh.model.geo.addLine(far_bl, far_br)  # left -> right
+        rect_right = gmsh.model.geo.addLine(far_br, far_tr)   # bottom-right -> top-right
+        rect_top = gmsh.model.geo.addLine(far_tr, far_tl)     # right -> left
+
+        # ============================================================
+        #  CURVE LOOPS AND SURFACE
+        # ============================================================
+        # Outer loop: farfield rectangle (CCW)
+        outer_loop = gmsh.model.geo.addCurveLoop([
+            rect_bottom,   # far_bl -> far_br (right)
+            rect_right,    # far_br -> far_tr (up)
+            rect_top,      # far_tr -> far_tl (left)
+            rect_left,     # far_tl -> far_bl (down)
+        ])
+
+        # Inner loop: body contour (CW = upper -> base_close -> lower -> nose_close)
+        # CW direction: right along top, down at base, left along bottom, up at nose
+        body_loop = gmsh.model.geo.addCurveLoop(
+            upper_body_lines + [base_close] + lower_body_lines + [nose_close],
+        )
+
+        # Fluid surface: region between farfield (outer) and body (inner hole)
+        surface = gmsh.model.geo.addPlaneSurface([outer_loop, body_loop])
+
+        gmsh.model.geo.synchronize()
+
+        # ============================================================
+        #  PHYSICAL GROUPS (SU2 markers)
+        #  NO sym marker -- full 2D, not axisymmetric.
+        # ============================================================
+        # body: entire closed body surface
+        gmsh.model.geo.addPhysicalGroup(
+            1,
+            upper_body_lines + [base_close] + lower_body_lines + [nose_close],
+            name="body",
+        )
+
+        # farfield: all four rectangle edges
+        gmsh.model.geo.addPhysicalGroup(
+            1, [rect_left, rect_bottom, rect_right, rect_top], name="farfield",
+        )
+
+        # fluid: the 2D surface
+        gmsh.model.geo.addPhysicalGroup(2, [surface], name="fluid")
+
+        gmsh.model.geo.synchronize()
+
+        # ============================================================
+        #  MESH GENERATION
+        # ============================================================
+        gmsh.option.setNumber("Mesh.Algorithm", 8)  # Frontal-Delaunay
+        gmsh.option.setNumber("Mesh.CharacteristicLengthMin", 0.5)
+        gmsh.option.setNumber("Mesh.CharacteristicLengthMax", 5.0)
+        gmsh.option.setNumber("Mesh.Smoothing", 50)
+        gmsh.model.mesh.generate(2)
+
+        # --- Export ---
+        gmsh.write(str(output_path))
+
+    except Exception as exc:
+        raise RuntimeError(f"Mesh generation failed: {exc}") from exc
+    finally:
+        try:
+            gmsh.finalize()
+        except OSError:
+            pass
+
+    return output_path
+
+
 def generate_rectangular_mesh(
     dxf_path: Path,
     output_path: Path,
