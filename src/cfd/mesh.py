@@ -1154,3 +1154,238 @@ def generate_rectangular_mesh(
             pass
 
     return output_path
+
+
+def generate_highres_mesh(
+    dxf_path: Path,
+    output_path: Path,
+    mach: float = 8.0,
+) -> Path:
+    """Generate a high-resolution mesh with boundary layer refinement.
+
+    Creates a full 2D (both halves) rectangular farfield mesh with:
+      - Subsampled body contour for appropriate boundary resolution
+      - Distance-based exponential size field for smooth body-to-farfield
+        transition (small cells near body, coarse farfield)
+      - Shock-capturing refinement zone at Billig standoff distance
+      - Junction and wake refinement zones
+      - Target 50K-100K elements for production-quality CFD
+
+    Unlike the explicit BL approach, this function uses gmsh's size fields
+    to naturally produce fine cells near the body surface.  The exponential
+    ramp ensures smooth size transition from body to farfield, avoiding
+    inverted elements caused by extreme size ratios.
+
+    Domain sizing:
+        Upstream:   5 * R_nose = 23.47 m
+        Downstream: 10 * body_length = 33.92 m
+        Lateral:    5 * max_radius = 9.78 m (above and below)
+
+    Args:
+        dxf_path: Path to the ``.npz`` file containing contour arrays
+            with keys ``x`` and ``r`` (upper half only).
+        output_path: Output ``.su2`` mesh file path.
+        mach: Freestream Mach number (for shock refinement, default 8.0).
+
+    Returns:
+        Path to the generated ``.su2`` mesh file.
+
+    Raises:
+        RuntimeError: If mesh generation fails.
+    """
+    import gmsh
+
+    # --- Apollo CM geometry parameters ---
+    R_nose = 4.694  # m (heat shield sphere radius)
+    body_length = 3.3918  # m
+    max_radius = 1.956  # m
+
+    # --- Domain sizing (5x upstream, 10x downstream, 5x lateral) ---
+    x_min = -5.0 * R_nose                   # -23.47 m
+    x_max = body_length + 10.0 * body_length  # 37.31 m
+    y_min = -5.0 * max_radius               # -9.78 m
+    y_max = 5.0 * max_radius                # 9.78 m
+
+    # --- Size field parameters ---
+    body_cell_size = 0.1    # cells near body surface (m)
+    farfield_cell_size = 2.0  # cells at farfield (m)
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        gmsh.initialize()
+        gmsh.option.setNumber("General.Terminal", 0)
+        gmsh.model.add("highres_mesh")
+
+        # ============================================================
+        #  LOAD AND SUBSAMPLE BODY CONTOUR
+        # ============================================================
+        data = np.load(dxf_path)
+        x_upper: np.ndarray = data["x"]
+        r_upper: np.ndarray = data["r"]
+
+        # Subsample: target ~40 points per half so boundary spacing
+        # is compatible with body_cell_size
+        target_per_half = 40
+        subsample = max(1, len(x_upper) // target_per_half)
+        idx = list(range(0, len(x_upper), subsample))
+        if idx[-1] != len(x_upper) - 1:
+            idx.append(len(x_upper) - 1)
+        x_upper_sub = x_upper[idx]
+        r_upper_sub = r_upper[idx]
+
+        # Mirror to create lower half: negate r, reverse order
+        x_lower = x_upper_sub[::-1]
+        r_lower = -r_upper_sub[::-1]
+
+        # Concatenate upper + lower to form full closed body contour
+        x_full = np.concatenate([x_upper_sub, x_lower[1:-1]])
+        r_full = np.concatenate([r_upper_sub, r_lower[1:-1]])
+        n_body = len(x_full)
+
+        # ============================================================
+        #  RECTANGULAR FARFIELD (4 corners)
+        # ============================================================
+        far_bl = gmsh.model.geo.addPoint(x_min, y_min, 0)
+        far_br = gmsh.model.geo.addPoint(x_max, y_min, 0)
+        far_tr = gmsh.model.geo.addPoint(x_max, y_max, 0)
+        far_tl = gmsh.model.geo.addPoint(x_min, y_max, 0)
+
+        rect_left = gmsh.model.geo.addLine(far_tl, far_bl)
+        rect_bottom = gmsh.model.geo.addLine(far_bl, far_br)
+        rect_right = gmsh.model.geo.addLine(far_br, far_tr)
+        rect_top = gmsh.model.geo.addLine(far_tr, far_tl)
+
+        # ============================================================
+        #  BODY CONTOUR (closed loop: upper -> lower -> close)
+        # ============================================================
+        body_pts: list[int] = []
+        for i in range(n_body):
+            pt = gmsh.model.geo.addPoint(float(x_full[i]), float(r_full[i]), 0)
+            body_pts.append(pt)
+
+        # Body lines (closed loop)
+        body_lines: list[int] = []
+        for i in range(n_body):
+            j = (i + 1) % n_body
+            line = gmsh.model.geo.addLine(body_pts[i], body_pts[j])
+            body_lines.append(line)
+
+        # ============================================================
+        #  CURVE LOOPS AND SURFACE
+        # ============================================================
+        # Outer loop: farfield rectangle (CCW)
+        outer_loop = gmsh.model.geo.addCurveLoop([
+            rect_bottom, rect_right, rect_top, rect_left,
+        ])
+
+        # Inner loop: body contour (reversed = CW for hole)
+        inner_loop = gmsh.model.geo.addCurveLoop(
+            list(reversed(body_lines)),
+        )
+
+        # Fluid surface: region between farfield and body
+        surface = gmsh.model.geo.addPlaneSurface([outer_loop, inner_loop])
+
+        # ============================================================
+        #  PHYSICAL GROUPS (SU2 markers)
+        # ============================================================
+        gmsh.model.geo.addPhysicalGroup(1, body_lines, name="body")
+
+        gmsh.model.geo.addPhysicalGroup(
+            1, [rect_left, rect_bottom, rect_right, rect_top], name="farfield",
+        )
+
+        gmsh.model.geo.addPhysicalGroup(2, [surface], name="fluid")
+
+        gmsh.model.geo.synchronize()
+
+        # ============================================================
+        #  SIZE FIELDS
+        # ============================================================
+        # Distance field from body surface
+        dist_tag = 100
+        gmsh.model.mesh.field.add("Distance", dist_tag)
+        gmsh.model.mesh.field.setNumbers(dist_tag, "CurvesList", body_lines)
+
+        # Shock refinement zone at Billig standoff distance
+        standoff = billig_blunted_cone(R_nose, mach).delta
+        shock_tag = 200
+        gmsh.model.mesh.field.add("Ball", shock_tag)
+        gmsh.model.mesh.field.setNumber(shock_tag, "XCenter", float(standoff))
+        gmsh.model.mesh.field.setNumber(shock_tag, "YCenter", 0.0)
+        gmsh.model.mesh.field.setNumber(shock_tag, "ZCenter", 0.0)
+        gmsh.model.mesh.field.setNumber(shock_tag, "VIn", body_cell_size)
+        gmsh.model.mesh.field.setNumber(shock_tag, "VOut", farfield_cell_size)
+        gmsh.model.mesh.field.setNumber(shock_tag, "Radius", 2.0 * standoff)
+
+        # Junction refinement at sphere-cone transition
+        junc_tag = 300
+        gmsh.model.mesh.field.add("Ball", junc_tag)
+        gmsh.model.mesh.field.setNumber(junc_tag, "XCenter", R_nose)
+        gmsh.model.mesh.field.setNumber(junc_tag, "YCenter", 0.0)
+        gmsh.model.mesh.field.setNumber(junc_tag, "ZCenter", 0.0)
+        gmsh.model.mesh.field.setNumber(junc_tag, "VIn", body_cell_size)
+        gmsh.model.mesh.field.setNumber(junc_tag, "VOut", farfield_cell_size)
+        gmsh.model.mesh.field.setNumber(junc_tag, "Radius", 2.0 * R_nose)
+
+        # Wake refinement downstream of body base
+        wake_tag = 400
+        gmsh.model.mesh.field.add("Box", wake_tag)
+        gmsh.model.mesh.field.setNumber(wake_tag, "XMin", body_length)
+        gmsh.model.mesh.field.setNumber(wake_tag, "XMax", x_max)
+        gmsh.model.mesh.field.setNumber(wake_tag, "YMin", -2.0 * max_radius)
+        gmsh.model.mesh.field.setNumber(wake_tag, "YMax", 2.0 * max_radius)
+        gmsh.model.mesh.field.setNumber(wake_tag, "VIn", body_cell_size * 2)
+        gmsh.model.mesh.field.setNumber(wake_tag, "VOut", farfield_cell_size)
+
+        # Exponential size ramp from body to farfield
+        # At dist=0: size = body_cell_size
+        # At dist=max_dist: size ~ farfield_cell_size
+        max_dist = np.hypot(x_max - x_min, y_max - y_min)
+        ramp = 0.5
+        scale_factor = np.log(
+            1.0 + (farfield_cell_size - body_cell_size) / ramp,
+        ) / max_dist
+
+        math_tag = 500
+        gmsh.model.mesh.field.add("MathEval", math_tag)
+        gmsh.model.mesh.field.setString(
+            math_tag,
+            "F",
+            f"Max({body_cell_size}, Min({farfield_cell_size}, "
+            f"{body_cell_size} + {ramp} * (Exp({scale_factor:.6e} * F{dist_tag}) - 1)))",
+        )
+
+        # Combine all fields with Min (take the smallest cell size)
+        min_tag = 999
+        gmsh.model.mesh.field.add("Min", min_tag)
+        gmsh.model.mesh.field.setNumbers(
+            min_tag, "FieldsList",
+            [math_tag, shock_tag, junc_tag, wake_tag],
+        )
+        gmsh.model.mesh.field.setAsBackgroundMesh(min_tag)
+
+        # ============================================================
+        #  MESH SETTINGS
+        # ============================================================
+        gmsh.option.setNumber("Mesh.Algorithm", 6)  # Frontal-Delaunay
+        gmsh.option.setNumber("Mesh.CharacteristicLengthMin", body_cell_size * 0.5)
+        gmsh.option.setNumber("Mesh.CharacteristicLengthMax", farfield_cell_size)
+        gmsh.option.setNumber("Mesh.Smoothing", 20)
+
+        gmsh.model.mesh.generate(2)
+
+        # --- Export ---
+        gmsh.write(str(output_path))
+
+    except Exception as exc:
+        raise RuntimeError(f"Mesh generation failed: {exc}") from exc
+    finally:
+        try:
+            gmsh.finalize()
+        except OSError:
+            pass
+
+    return output_path
