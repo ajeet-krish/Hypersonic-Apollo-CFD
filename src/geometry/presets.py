@@ -8,11 +8,12 @@ from .config import BluntBodyConfig
 def apollo_cm() -> BluntBodyConfig:
     """Apollo Command Module blunt body geometry.
 
-    Source: NASA AS-202, DXF-verified dimensions.
+    Source: DXF-verified dimensions from geometry/apollo_2d.dxf.
     Concave spherical heat shield (R=4.694m) + 33-deg conical afterbody.
-    Max diameter 3.912m (radius 1.956m).
-    Junction fillet R=0.196m (7.7 in), base fillet R=0.231m (9.1 in).
-    Total axial length: 3.392m (133.5 in).
+    Max radius 1.924m at fillet-cone junction (DXF point (0.661, 1.924)).
+    Base radius 0.219m at cone-base junction (DXF point (3.287, 0.219)).
+    Shoulder fillet R=0.196m, base fillet R=0.231m.
+    Total axial length: 3.391m.
 
     Sphere center is at (R, 0) = (4.694, 0) on the axis, ahead of the nose.
     The heat shield is a concave spherical dish curving inward from the nose.
@@ -24,10 +25,10 @@ def apollo_cm() -> BluntBodyConfig:
         R_shield=4.694,
         R_fillet=0.196,
         cone_half_angle=33.0,
-        max_radius=1.956,
-        base_radius=0.03,
+        max_radius=1.924,
+        base_radius=0.219,
         base_fillet_radius=0.231,
-        body_length=3.3918,
+        body_length=3.391,
         num_points=600,
     )
 

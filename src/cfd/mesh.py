@@ -464,89 +464,192 @@ def generate_body_mesh(
                     bl_surfaces.append(surf2)
 
         # ============================================================
-        #  O-GRID ELLIPTICAL BOUNDARY
+        #  O-GRID ELLIPTICAL BOUNDARY + PHYSICAL GROUPS
         # ============================================================
-        # Generate upper-half ellipse points for the outer boundary.
-        # Theta from 0 (base/right) to pi (nose/left) through the top.
-        n_upper = 21  # odd so we get a center point at the top
-        theta_upper = np.linspace(0.0, np.pi, n_upper)
-        ell_upper_x = domain.center_x + domain.semi_major * np.cos(theta_upper)
-        ell_upper_r = domain.center_r + domain.semi_minor * np.sin(theta_upper)
+        # Curves used for the distance-based size field (defined in
+        # both branches so the field section below can reference them).
+        offset_curves: list[int]
 
-        upper_ell_pts: list[int] = []
-        for j in range(n_upper):
-            pt = gmsh.model.geo.addPoint(
-                float(ell_upper_x[j]), float(ell_upper_r[j]), 0,
+        if is_full2d:
+            # ---- Full 2D: complete ellipse (0 to 2 pi) ----
+            n_full = 42
+            theta_full = np.linspace(0, 2 * np.pi, n_full, endpoint=False)
+            ell_full_x = domain.center_x + domain.semi_major * np.cos(theta_full)
+            ell_full_r = domain.center_r + domain.semi_minor * np.sin(theta_full)
+
+            ell_full_pts: list[int] = []
+            for j in range(n_full):
+                pt = gmsh.model.geo.addPoint(
+                    float(ell_full_x[j]), float(ell_full_r[j]), 0,
+                )
+                ell_full_pts.append(pt)
+
+            # Closed spline around the full ellipse (last -> first to close)
+            ellipse_spline = gmsh.model.geo.addSpline(
+                ell_full_pts + [ell_full_pts[0]],
             )
-            upper_ell_pts.append(pt)
 
-        # Open spline along the upper half of the ellipse (base -> nose)
-        upper_ellipse_spline = gmsh.model.geo.addSpline(upper_ell_pts)
+            # BL offset splines for upper and lower halves
+            upper_offset_pts = [bl_nodes[i][n_bl] for i in range(n_body)]
+            lower_offset_pts = [lower_bl_nodes[i][n_bl] for i in range(n_body)]
 
-        # BL offset spline (top of BL, inner boundary of outer surface)
-        outer_inner_pts = [bl_nodes[i][n_bl] for i in range(n_body)]
-        offset_spline = gmsh.model.geo.addSpline(outer_inner_pts)
-
-        # --- Symmetry lines (along the axis r=0) ---
-        # Upstream: from ellipse nose (x_min, 0) to body nose (0, 0)
-        # Ellipse nose is the last point in the upper half (theta=pi)
-        ell_nose_pt = upper_ell_pts[-1]
-        sym_up_line = gmsh.model.geo.addLine(ell_nose_pt, bl_nodes[0][0])
-
-        # Downstream: from body base axis point to ellipse base (x_max, 0)
-        # Place a point on the axis at the body base x-coordinate
-        body_base_axis_pt = gmsh.model.geo.addPoint(
-            float(config.computed_body_length), 0.0, 0,
-        )
-        # Ellipse base is the first point in the upper half (theta=0)
-        ell_base_pt = upper_ell_pts[0]
-        sym_down_line = gmsh.model.geo.addLine(body_base_axis_pt, ell_base_pt)
-
-        # --- Outer surface (offset BL to ellipse) ---
-        # Connect BL offset to ellipse at upstream and downstream
-        # Upstream: ellipse_nose -> BL offset start (near body nose)
-        upstream_conn = gmsh.model.geo.addLine(ell_nose_pt, outer_inner_pts[0])
-        # Downstream: BL offset end (near body base) -> ellipse base
-        downstream_conn = gmsh.model.geo.addLine(
-            outer_inner_pts[-1], ell_base_pt,
-        )
-
-        # Outer surface loop (CCW in upper half-plane):
-        # 1. offset_spline: BL offset from nose-end to base-end (left to right)
-        # 2. downstream_conn: BL offset end -> ellipse base (right, outward)
-        # 3. upper_ellipse_spline: ellipse base -> nose via top (right to left)
-        # 4. upstream_conn: ellipse nose -> BL offset start (left, inward)
-        outer_loop = gmsh.model.geo.addCurveLoop([
-            offset_spline,
-            downstream_conn,
-            upper_ellipse_spline,
-            upstream_conn,
-        ])
-        outer_surface = gmsh.model.geo.addPlaneSurface([outer_loop])
-
-        # --- Physical groups (SU2 markers) for axisymmetric ---
-        # Body curves: all body contour line segments
-        body_curves = []
-        for i in range(n_body - 1):
-            body_curves.append(
-                gmsh.model.geo.addLine(bl_nodes[i][0], bl_nodes[i + 1][0])
+            upper_offset_spline = gmsh.model.geo.addSpline(upper_offset_pts)
+            # Lower offset: reverse so the spline goes base -> nose
+            lower_offset_spline = gmsh.model.geo.addSpline(
+                lower_offset_pts[::-1],
             )
-        gmsh.model.geo.addPhysicalGroup(1, body_curves, name="body")
 
-        # Farfield: the upper ellipse spline
-        gmsh.model.geo.addPhysicalGroup(
-            1, [upper_ellipse_spline], name="farfield",
-        )
+            # Connect BL offsets at nose and base to close the inner loop
+            nose_conn = gmsh.model.geo.addLine(
+                lower_offset_pts[0], upper_offset_pts[0],
+            )
+            base_conn = gmsh.model.geo.addLine(
+                upper_offset_pts[-1], lower_offset_pts[-1],
+            )
 
-        # Symmetry: both upstream and downstream lines on the axis
-        gmsh.model.geo.addPhysicalGroup(
-            1, [sym_up_line, sym_down_line], name="sym",
-        )
+            # Outer surface: annular region between BL offset and ellipse
+            # Inner loop (CW = hole): upper_offset, base_conn,
+            #   lower_offset, nose_conn
+            bl_loop = gmsh.model.geo.addCurveLoop([
+                upper_offset_spline,
+                base_conn,
+                lower_offset_spline,
+                nose_conn,
+            ])
+            # Outer loop (CCW): full ellipse
+            ell_loop = gmsh.model.geo.addCurveLoop([ellipse_spline])
+            outer_surface = gmsh.model.geo.addPlaneSurface([ell_loop, bl_loop])
 
-        # Fluid: BL surfaces + outer surface
-        gmsh.model.geo.addPhysicalGroup(
-            2, bl_surfaces + [outer_surface], name="fluid",
-        )
+            # --- Physical groups for full 2D ---
+            # Body curves: upper + base + lower
+            upper_body_curves: list[int] = []
+            for i in range(n_body - 1):
+                upper_body_curves.append(
+                    gmsh.model.geo.addLine(bl_nodes[i][0], bl_nodes[i + 1][0])
+                )
+            # Base edge: upper base -> lower base
+            base_body_curve = gmsh.model.geo.addLine(
+                bl_nodes[n_body - 1][0], lower_bl_nodes[n_body - 1][0],
+            )
+            # Lower body curves: base -> nose (reversed index order)
+            lower_body_curves: list[int] = []
+            for i in range(n_body - 1):
+                lower_body_curves.append(
+                    gmsh.model.geo.addLine(
+                        lower_bl_nodes[n_body - 1 - i][0],
+                        lower_bl_nodes[n_body - 2 - i][0],
+                    )
+                )
+            gmsh.model.geo.addPhysicalGroup(
+                1,
+                upper_body_curves + [base_body_curve] + lower_body_curves,
+                name="body",
+            )
+            # Farfield: the full ellipse
+            gmsh.model.geo.addPhysicalGroup(
+                1, [ellipse_spline], name="farfield",
+            )
+            # Fluid: BL surfaces + outer surface
+            gmsh.model.geo.addPhysicalGroup(
+                2, bl_surfaces + [outer_surface], name="fluid",
+            )
+            # NO sym marker for full 2d
+
+            offset_curves = [upper_offset_spline, lower_offset_spline]
+
+        else:
+            # ---- Axisymmetric: upper-half ellipse only ----
+            # Generate upper-half ellipse points for the outer boundary.
+            # Theta from 0 (base/right) to pi (nose/left) through the top.
+            n_upper = 21  # odd so we get a center point at the top
+            theta_upper = np.linspace(0.0, np.pi, n_upper)
+            ell_upper_x = (
+                domain.center_x + domain.semi_major * np.cos(theta_upper)
+            )
+            ell_upper_r = (
+                domain.center_r + domain.semi_minor * np.sin(theta_upper)
+            )
+
+            upper_ell_pts: list[int] = []
+            for j in range(n_upper):
+                pt = gmsh.model.geo.addPoint(
+                    float(ell_upper_x[j]), float(ell_upper_r[j]), 0,
+                )
+                upper_ell_pts.append(pt)
+
+            # Open spline along the upper half of the ellipse (base -> nose)
+            upper_ellipse_spline = gmsh.model.geo.addSpline(upper_ell_pts)
+
+            # BL offset spline (top of BL, inner boundary of outer surface)
+            outer_inner_pts = [bl_nodes[i][n_bl] for i in range(n_body)]
+            offset_spline = gmsh.model.geo.addSpline(outer_inner_pts)
+
+            # --- Symmetry lines (along the axis r=0) ---
+            # Upstream: from ellipse nose (x_min, 0) to body nose (0, 0)
+            # Ellipse nose is the last point in the upper half (theta=pi)
+            ell_nose_pt = upper_ell_pts[-1]
+            sym_up_line = gmsh.model.geo.addLine(ell_nose_pt, bl_nodes[0][0])
+
+            # Downstream: from body base axis point to ellipse base (x_max, 0)
+            # Place a point on the axis at the body base x-coordinate
+            body_base_axis_pt = gmsh.model.geo.addPoint(
+                float(config.computed_body_length), 0.0, 0,
+            )
+            # Ellipse base is the first point in the upper half (theta=0)
+            ell_base_pt = upper_ell_pts[0]
+            sym_down_line = gmsh.model.geo.addLine(
+                body_base_axis_pt, ell_base_pt,
+            )
+
+            # --- Outer surface (offset BL to ellipse) ---
+            # Connect BL offset to ellipse at upstream and downstream
+            # Upstream: ellipse_nose -> BL offset start (near body nose)
+            upstream_conn = gmsh.model.geo.addLine(
+                ell_nose_pt, outer_inner_pts[0],
+            )
+            # Downstream: BL offset end (near body base) -> ellipse base
+            downstream_conn = gmsh.model.geo.addLine(
+                outer_inner_pts[-1], ell_base_pt,
+            )
+
+            # Outer surface loop (CCW in upper half-plane):
+            # 1. offset_spline: BL offset from nose-end to base-end
+            # 2. downstream_conn: BL offset end -> ellipse base
+            # 3. upper_ellipse_spline: ellipse base -> nose via top
+            # 4. upstream_conn: ellipse nose -> BL offset start
+            outer_loop = gmsh.model.geo.addCurveLoop([
+                offset_spline,
+                downstream_conn,
+                upper_ellipse_spline,
+                upstream_conn,
+            ])
+            outer_surface = gmsh.model.geo.addPlaneSurface([outer_loop])
+
+            # --- Physical groups (SU2 markers) for axisymmetric ---
+            # Body curves: all body contour line segments
+            body_curves = []
+            for i in range(n_body - 1):
+                body_curves.append(
+                    gmsh.model.geo.addLine(bl_nodes[i][0], bl_nodes[i + 1][0])
+                )
+            gmsh.model.geo.addPhysicalGroup(1, body_curves, name="body")
+
+            # Farfield: the upper ellipse spline
+            gmsh.model.geo.addPhysicalGroup(
+                1, [upper_ellipse_spline], name="farfield",
+            )
+
+            # Symmetry: both upstream and downstream lines on the axis
+            gmsh.model.geo.addPhysicalGroup(
+                1, [sym_up_line, sym_down_line], name="sym",
+            )
+
+            # Fluid: BL surfaces + outer surface
+            gmsh.model.geo.addPhysicalGroup(
+                2, bl_surfaces + [outer_surface], name="fluid",
+            )
+
+            offset_curves = [offset_spline]
 
         # --- Synchronize geometry ---
         gmsh.model.geo.synchronize()
@@ -599,7 +702,7 @@ def generate_body_mesh(
         # causes inverted elements.
         distance_tag = 700
         gmsh.model.mesh.field.add("Distance", distance_tag)
-        gmsh.model.mesh.field.setNumbers(distance_tag, "CurvesList", [offset_spline])
+        gmsh.model.mesh.field.setNumbers(distance_tag, "CurvesList", offset_curves)
 
         # Compute ramp parameters
         bl_edge_spacing = 0.5 * body_length / max(n_body - 1, 1)

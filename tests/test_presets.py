@@ -16,9 +16,9 @@ class TestPresets:
         assert config.cone_half_angle == 33.0
 
     def test_apollo_cm_base_radius(self):
-        """Apollo CM should have base_radius=1.5."""
+        """Apollo CM should have base_radius=0.219 (cone-base junction)."""
         config = apollo_cm()
-        assert config.base_radius == 1.5
+        assert config.base_radius == 0.219
 
     def test_apollo_cm_num_points(self):
         """Apollo CM should have num_points=600."""
@@ -59,6 +59,6 @@ class TestPresets:
         assert validated.R_nose == 0.1
 
     def test_apollo_cm_docstring_source(self):
-        """Apollo CM docstring should reference NASA and AS-202."""
-        assert "NASA" in apollo_cm.__doc__
-        assert "AS-202" in apollo_cm.__doc__
+        """Apollo CM docstring should reference DXF source geometry."""
+        assert "DXF" in apollo_cm.__doc__
+        assert "apollo_2d.dxf" in apollo_cm.__doc__

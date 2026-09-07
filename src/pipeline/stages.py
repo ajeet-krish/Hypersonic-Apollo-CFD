@@ -187,6 +187,13 @@ def run_mesh_stage(config: CaseConfig) -> int:
     print(f"  Shock refinement: {mesh_config.shock_refinement}")
     if config.aoa != 0.0:
         print(f"  Angle of attack: {config.aoa} deg (full2d forced)")
+    if config.full2d:
+        print(f"  Full 2D mode: showing entire body")
+
+    # Force full2d when aoa is nonzero or full2d flag is set
+    is_full2d = config.aoa != 0.0 or config.full2d
+    if is_full2d:
+        mesh_config = MeshConfig.for_tier(config.mesh_tier, domain_type="full2d")
 
     try:
         generate_body_mesh(
@@ -267,10 +274,12 @@ def run_su2_stage(config: CaseConfig) -> int:
         iterations=config.su2_iterations,
     )
 
-    # Apply angle of attack and full2d when aoa is nonzero
-    if config.aoa != 0.0:
-        su2_config = su2_config.as_full2d().with_aoa(config.aoa)
-        print(f"  AoA: {config.aoa} deg, full2d mode")
+    # Apply angle of attack and full2d when aoa is nonzero or full2d flag set
+    if config.aoa != 0.0 or config.full2d:
+        su2_config = su2_config.as_full2d()
+        if config.aoa != 0.0:
+            su2_config = su2_config.with_aoa(config.aoa)
+        print(f"  Full 2D mode (axisymmetric=NO)")
 
     # Output directory (per-Mach subdirectory)
     su2_dir = Path(config.su2_dir)

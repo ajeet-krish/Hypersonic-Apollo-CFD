@@ -24,7 +24,7 @@ class TestBluntBodyConfig:
         assert config.half_angle_rad == pytest.approx(math.radians(50.0), rel=1e-10)
 
     def test_junction_x(self):
-        """junction_x = R_shield * sin(phi_j) where phi_j depends on max_radius."""
+        """junction_x = R_shield * (1 - cos(phi_j)) for concave sphere (no fillet)."""
         theta = math.radians(50.0)
         # Set max_radius so that phi_j = theta (matches old geometry)
         max_r = 0.196 * (1.0 - math.cos(theta))
@@ -32,7 +32,8 @@ class TestBluntBodyConfig:
             R_shield=0.196, cone_half_angle=50.0,
             max_radius=max_r, base_radius=0.05,
         )
-        expected = 0.196 * math.sin(theta)
+        phi_j = math.asin(max_r / 0.196)
+        expected = 0.196 * (1.0 - math.cos(phi_j))
         assert config.junction_x == pytest.approx(expected, rel=1e-10)
 
     def test_junction_r(self):
@@ -46,16 +47,17 @@ class TestBluntBodyConfig:
         assert config.junction_r == pytest.approx(max_r, rel=1e-10)
 
     def test_computed_body_length(self):
-        """computed_body_length = x_j + |max_radius - base_radius|/tan(theta)."""
+        """computed_body_length includes base fillet term for concave sphere."""
         theta = math.radians(50.0)
         max_r = 0.196 * (1.0 - math.cos(theta))
-        x_j = 0.196 * math.sin(theta)
+        phi_j = math.asin(max_r / 0.196)
+        x_j = 0.196 * (1.0 - math.cos(phi_j))
         base_r = 0.05
         config = BluntBodyConfig(
             R_shield=0.196, cone_half_angle=50.0,
             max_radius=max_r, base_radius=base_r,
         )
-        expected = x_j + abs(max_r - base_r) / math.tan(theta)
+        expected = x_j + (max_r - base_r) / math.tan(theta)
         assert config.computed_body_length == pytest.approx(expected, rel=1e-10)
 
     def test_computed_base_radius_default(self):

@@ -46,6 +46,7 @@ def _contour_simple(config: BluntBodyConfig) -> tuple[np.ndarray, np.ndarray]:
     """
     R = config.R_shield
     max_r = config.max_radius
+    theta = config.half_angle_rad
 
     # Sphere-cone junction angle
     # For concave sphere (center at (R, 0)): r = R*sin(phi) = max_r
@@ -78,17 +79,25 @@ def _contour_simple(config: BluntBodyConfig) -> tuple[np.ndarray, np.ndarray]:
     x_j = x_sphere[-1]
     r_j = r_sphere[-1]
 
-    x_cone_end = L - Rbf if Rbf > 0 else L
+    # Base fillet is concave: center near axis, tangent to cone and base face
+    if Rbf > 0:
+        bf_center_x = L - Rbf
+        bf_center_r = config.base_radius - Rbf * math.cos(theta)
+        x_cone_end = bf_center_x + Rbf * math.sin(theta)
+    else:
+        x_cone_end = L
+
     x_cone = np.linspace(x_j, x_cone_end, n_cone)
     r_cone = r_j + (config.base_radius - r_j) * (x_cone - x_j) / (x_cone_end - x_j)
 
-    # Base fillet: circular arc from cone end to base
+    # Base fillet: concave arc from cone tangent point to base face
     if Rbf > 0 and n_base_fillet > 0:
-        x_fc = x_cone_end
-        r_fc = config.base_radius + Rbf
-        alpha = np.linspace(-math.pi / 2, 0, n_base_fillet)
-        x_base_fillet = x_fc + Rbf * np.cos(alpha)
-        r_base_fillet = r_fc + Rbf * np.sin(alpha)
+        bf_center_x = L - Rbf
+        bf_center_r = config.base_radius - Rbf * math.cos(theta)
+        # Arc from cone-tangent point (alpha = pi/2 - theta) to base point (alpha = 0)
+        alpha = np.linspace(math.pi / 2 - theta, 0, n_base_fillet)
+        x_base_fillet = bf_center_x + Rbf * np.cos(alpha)
+        r_base_fillet = bf_center_r + Rbf * np.sin(alpha)
 
         x = np.concatenate([x_sphere, x_cone[1:], x_base_fillet[1:]])
         r = np.concatenate([r_sphere, r_cone[1:], r_base_fillet[1:]])
@@ -118,15 +127,15 @@ def _contour_with_fillet(config: BluntBodyConfig) -> tuple[np.ndarray, np.ndarra
     max_r = config.max_radius
 
     # Sphere-fillet junction angle
-    # For concave sphere (center at (R, 0)): r = R*sin(phi)
-    # At junction: r = max_r, so phi_sf = asin(max_r / R)
-    phi_sf = math.asin(max_r / R)
+    # Internal tangency for concave sphere: fillet center at distance (R - Rf)
+    # from sphere center.  The fillet-cone junction reaches max_r:
+    #   r_f + Rf*cos(theta) = max_r, where r_f = (R - Rf)*sin(phi_sf)
+    sin_phi_sf = (max_r - Rf * math.cos(theta)) / (R - Rf)
+    phi_sf = math.asin(max(-1.0, min(1.0, sin_phi_sf)))
 
-    # Fillet center: offset from sphere surface along outward normal
-    # The fillet center is at distance (R + Rf) from sphere center along
-    # the radial direction at phi_sf
-    x_f = R - (R + Rf) * math.cos(phi_sf)
-    r_f = (R + Rf) * math.sin(phi_sf)
+    # Fillet center: internally tangent to concave sphere
+    x_f = R - (R - Rf) * math.cos(phi_sf)
+    r_f = (R - Rf) * math.sin(phi_sf)
 
     # Fillet-cone junction (cone tangent point)
     x_tc = x_f + Rf * math.sin(theta)
@@ -154,22 +163,31 @@ def _contour_with_fillet(config: BluntBodyConfig) -> tuple[np.ndarray, np.ndarra
     r_sphere = R * np.sin(phi)
 
     # Fillet arc: from sphere tangent to cone tangent
-    alpha = np.linspace(phi_sf, theta, n_fillet)
+    # At sphere tangent, alpha = phi_sf - pi/2; at cone tangent, alpha = theta
+    alpha = np.linspace(phi_sf - math.pi / 2, theta, n_fillet)
     x_fillet = x_f + Rf * np.sin(alpha)
     r_fillet_curve = r_f + Rf * np.cos(alpha)
 
     # Cone: from (x_tc, r_tc) to base (tapers inward)
-    x_cone_end = L - Rbf if Rbf > 0 else L
+    # Base fillet is concave: center near axis, tangent to cone and base face
+    if Rbf > 0:
+        bf_center_x = L - Rbf
+        bf_center_r = config.base_radius - Rbf * math.cos(theta)
+        x_cone_end = bf_center_x + Rbf * math.sin(theta)
+    else:
+        x_cone_end = L
+
     x_cone = np.linspace(x_tc, x_cone_end, n_cone)
     r_cone = r_tc + (config.base_radius - r_tc) * (x_cone - x_tc) / (x_cone_end - x_tc)
 
-    # Base fillet: circular arc from cone end to base
+    # Base fillet: concave arc from cone tangent point to base face
     if Rbf > 0 and n_base_fillet > 0:
-        x_fc = x_cone_end
-        r_fc = config.base_radius + Rbf
-        beta = np.linspace(-math.pi / 2, 0, n_base_fillet)
-        x_base_fillet = x_fc + Rbf * np.cos(beta)
-        r_base_fillet = r_fc + Rbf * np.sin(beta)
+        bf_center_x = L - Rbf
+        bf_center_r = config.base_radius - Rbf * math.cos(theta)
+        # Arc from cone-tangent point (beta = pi/2 - theta) to base point (beta = 0)
+        beta = np.linspace(math.pi / 2 - theta, 0, n_base_fillet)
+        x_base_fillet = bf_center_x + Rbf * np.cos(beta)
+        r_base_fillet = bf_center_r + Rbf * np.sin(beta)
 
         x = np.concatenate([x_sphere, x_fillet[1:], x_cone[1:], x_base_fillet[1:]])
         r = np.concatenate([r_sphere, r_fillet_curve[1:], r_cone[1:], r_base_fillet[1:]])

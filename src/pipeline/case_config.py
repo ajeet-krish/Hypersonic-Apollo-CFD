@@ -61,6 +61,7 @@ class CaseConfig:
     su2_rans_iterations: int = 10000
     su2_mach_ramp_start: float = 5.0
     convergence_strategy: ConvergenceStrategy | None = None
+    full2d: bool = False  # Show entire body (both halves), not axisymmetric half
 
     @property
     def output_dir(self) -> str:

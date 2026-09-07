@@ -200,6 +200,7 @@ class TestPlotBody3d:
         config = BluntBodyConfig(
             R_shield=0.1,
             cone_half_angle=45.0,
+            max_radius=0.05,
             base_radius=0.5,
             num_points=100,
         )

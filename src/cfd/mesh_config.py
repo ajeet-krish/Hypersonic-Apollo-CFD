@@ -175,6 +175,11 @@ class MeshConfig:
             )
         mult = _TIER_MULTIPLIERS[tier]
 
+        # Full2D domain wraps the entire body (no symmetry axis), so
+        # lateral waste is reduced from 8x to 4x R_nose.
+        domain_type_val = str(overrides.pop("domain_type", "axisymmetric"))
+        default_lateral = 4.0 if domain_type_val == "full2d" else 8.0
+
         config = cls(
             n_bl=max(10, int(50 * mult)),
             first_cell_height=overrides.pop("first_cell_height", None),
@@ -186,10 +191,10 @@ class MeshConfig:
             shock_standoff_factor=float(overrides.pop("shock_standoff_factor", 1.5)),
             farfield_distance=float(overrides.pop("farfield_distance", 25.0)),
             mesh_tier=tier,
-            domain_type=str(overrides.pop("domain_type", "axisymmetric")),
+            domain_type=domain_type_val,
             upstream_factor=float(overrides.pop("upstream_factor", 8.0)),
             downstream_factor=float(overrides.pop("downstream_factor", 12.0)),
-            lateral_factor=float(overrides.pop("lateral_factor", 8.0)),
+            lateral_factor=float(overrides.pop("lateral_factor", default_lateral)),
         )
 
         # Apply any remaining overrides via replace pattern

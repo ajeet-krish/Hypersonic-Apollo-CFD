@@ -70,45 +70,53 @@ class BluntBodyConfig:
         theta = self.half_angle_rad
 
         if self.R_fillet > 0:
-            # Sphere-fillet junction angle
-            cos_phi = (self.R_shield + self.R_fillet - self.max_radius) / (
-                self.R_shield + self.R_fillet
+            # Internal tangency for concave sphere
+            sin_phi = (self.max_radius - self.R_fillet * math.cos(theta)) / (
+                self.R_shield - self.R_fillet
             )
-            phi_sf = math.acos(max(-1.0, min(1.0, cos_phi)))
+            phi_sf = math.asin(max(-1.0, min(1.0, sin_phi)))
             # Fillet center
-            x_f = (self.R_shield - self.R_fillet) * math.sin(phi_sf)
-            r_f = self.R_shield - (self.R_shield + self.R_fillet) * math.cos(phi_sf)
+            x_f = self.R_shield - (self.R_shield - self.R_fillet) * math.cos(phi_sf)
+            r_f = (self.R_shield - self.R_fillet) * math.sin(phi_sf)
             # Fillet-cone junction (cone tangent point)
             x_tc = x_f + self.R_fillet * math.sin(theta)
             r_tc = r_f + self.R_fillet * math.cos(theta)
-            return x_tc + abs(r_tc - self.base_radius) / math.tan(theta)
+            L_cone = x_tc + (r_tc - self.base_radius) / math.tan(theta)
+            Rbf = self.base_fillet_radius
+            L_bf = Rbf * (1.0 - math.sin(theta)) if Rbf > 0 else 0.0
+            return L_cone + L_bf
         else:
-            phi_j = math.acos(1.0 - self.max_radius / self.R_shield)
-            x_j = self.R_shield * math.sin(phi_j)
-            return x_j + abs(self.max_radius - self.base_radius) / math.tan(theta)
+            phi_j = math.asin(self.max_radius / self.R_shield)
+            x_j = self.R_shield * (1.0 - math.cos(phi_j))
+            L_cone = x_j + (self.max_radius - self.base_radius) / math.tan(theta)
+            Rbf = self.base_fillet_radius
+            L_bf = Rbf * (1.0 - math.sin(theta)) if Rbf > 0 else 0.0
+            return L_cone + L_bf
 
     @property
     def junction_x(self) -> float:
         """x at sphere-fillet or sphere-cone junction (m)."""
         if self.R_fillet > 0:
-            cos_phi = (self.R_shield + self.R_fillet - self.max_radius) / (
-                self.R_shield + self.R_fillet
+            theta = self.half_angle_rad
+            sin_phi = (self.max_radius - self.R_fillet * math.cos(theta)) / (
+                self.R_shield - self.R_fillet
             )
-            phi_sf = math.acos(max(-1.0, min(1.0, cos_phi)))
-            return self.R_shield * math.sin(phi_sf)
+            phi_sf = math.asin(max(-1.0, min(1.0, sin_phi)))
+            return self.R_shield * (1.0 - math.cos(phi_sf))
         else:
-            phi_j = math.acos(1.0 - self.max_radius / self.R_shield)
-            return self.R_shield * math.sin(phi_j)
+            phi_j = math.asin(self.max_radius / self.R_shield)
+            return self.R_shield * (1.0 - math.cos(phi_j))
 
     @property
     def junction_r(self) -> float:
         """r at sphere-fillet or sphere-cone junction (m)."""
         if self.R_fillet > 0:
-            cos_phi = (self.R_shield + self.R_fillet - self.max_radius) / (
-                self.R_shield + self.R_fillet
+            theta = self.half_angle_rad
+            sin_phi = (self.max_radius - self.R_fillet * math.cos(theta)) / (
+                self.R_shield - self.R_fillet
             )
-            phi_sf = math.acos(max(-1.0, min(1.0, cos_phi)))
-            return self.R_shield * (1.0 - math.cos(phi_sf))
+            phi_sf = math.asin(max(-1.0, min(1.0, sin_phi)))
+            return self.R_shield * math.sin(phi_sf)
         else:
             return self.max_radius
 
@@ -149,7 +157,10 @@ class BluntBodyConfig:
         if num_points < 10:
             raise ValueError(f"num_points must be >= 10, got {num_points}")
         if R_fillet > 0:
-            cos_phi = (R_shield + R_fillet - max_radius) / (R_shield + R_fillet)
-            if cos_phi < -1 or cos_phi > 1:
+            theta_rad = math.radians(cone_half_angle)
+            sin_phi = (max_radius - R_fillet * math.cos(theta_rad)) / (
+                R_shield - R_fillet
+            )
+            if sin_phi < -1 or sin_phi > 1:
                 raise ValueError("Invalid geometry: fillet cannot reach max_radius")
         return cls(**kwargs)

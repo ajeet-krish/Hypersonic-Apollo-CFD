@@ -391,14 +391,16 @@ class TestGeometryEdgeCases:
 
     def test_very_small_half_angle(self):
         """Very small half_angle (1 degree) should work."""
-        config = BluntBodyConfig(R_shield=0.1, cone_half_angle=1.0, base_radius=0.5)
+        config = BluntBodyConfig(R_shield=0.1, cone_half_angle=1.0,
+                                 max_radius=0.05, base_radius=0.5)
         x, r = generate_contour(config)
         assert len(x) > 0
         assert r[-1] == pytest.approx(config.base_radius, rel=1e-4)
 
     def test_large_half_angle(self):
         """Large half_angle (84 degrees) should work."""
-        config = BluntBodyConfig(R_shield=0.1, cone_half_angle=84.0, base_radius=5.0)
+        config = BluntBodyConfig(R_shield=0.1, cone_half_angle=84.0,
+                                 max_radius=0.05, base_radius=5.0)
         x, r = generate_contour(config)
         assert len(x) > 0
         assert r[-1] == pytest.approx(config.base_radius, rel=1e-4)

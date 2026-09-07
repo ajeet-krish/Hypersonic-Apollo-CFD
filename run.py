@@ -58,6 +58,11 @@ def main() -> int:
         help="Angle of attack in degrees (default: 0.0)",
     )
     parser.add_argument(
+        "--full2d",
+        action="store_true",
+        help="Show entire body (both halves), not axisymmetric half",
+    )
+    parser.add_argument(
         "--tier",
         choices=["draft", "standard", "high"],
         default="standard",
@@ -114,6 +119,7 @@ def main() -> int:
         mach=args.mach,
         altitude=args.altitude,
         aoa=args.aoa,
+        full2d=args.full2d,
         mesh_tier=args.tier,
         su2_iterations=args.iterations,
         su2_cfl=args.cfl,

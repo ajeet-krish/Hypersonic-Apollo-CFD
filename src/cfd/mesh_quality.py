@@ -258,8 +258,11 @@ def validate_su2_mesh(mesh_path: Path) -> bool:
         if "NDIME= 2" not in content:
             return False
 
-        # Check required markers
-        for marker in ("body", "farfield", "sym"):
+        # Check required markers: body and farfield are always present.
+        # 'sym' is present only for axisymmetric domains; full2d has no
+        # symmetry boundary, so accept either (sym, farfield, body) or
+        # just (farfield, body).
+        for marker in ("body", "farfield"):
             if f"MARKER_TAG= {marker}" not in content:
                 return False
 
