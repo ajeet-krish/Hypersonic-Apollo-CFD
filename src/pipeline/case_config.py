@@ -68,6 +68,17 @@ class CaseConfig:
         return f"output/{self.name}"
 
     @property
+    def su2_dir(self) -> str:
+        """SU2 output directory, organized by Mach number."""
+        mach_str = f"m{self.mach}".replace(".", "_")
+        return f"output/{self.name}/su2/{mach_str}"
+
+    @property
+    def geometry_dir(self) -> str:
+        """Geometry output directory (top-level, alongside source CAD)."""
+        return "geometry"
+
+    @property
     def images_dir(self) -> str:
         """Images directory for plots."""
         return f"docs/assets/images/{self.name}"

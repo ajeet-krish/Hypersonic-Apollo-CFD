@@ -66,7 +66,7 @@ def run_geometry_stage(config: CaseConfig) -> int:
     rg_correction = gamma_correction_factor(T_stag, config.gamma)
 
     # Save contour JSON
-    out_dir = Path(config.output_dir) / "geometry"
+    out_dir = Path(config.geometry_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     contour_data = {
@@ -272,8 +272,8 @@ def run_su2_stage(config: CaseConfig) -> int:
         su2_config = su2_config.as_full2d().with_aoa(config.aoa)
         print(f"  AoA: {config.aoa} deg, full2d mode")
 
-    # Output directory
-    su2_dir = Path(config.output_dir) / "su2"
+    # Output directory (per-Mach subdirectory)
+    su2_dir = Path(config.su2_dir)
     su2_dir.mkdir(parents=True, exist_ok=True)
 
     # Mesh file from Phase 2
@@ -577,7 +577,7 @@ def run_postprocess_stage(config: CaseConfig) -> int:
     x_body, r_body = generate_contour(body_config)
 
     # Load VTU solution
-    vtu_path = Path(config.output_dir) / "su2" / "flow.vtu"
+    vtu_path = Path(config.su2_dir) / "flow.vtu"
     if not vtu_path.exists():
         print(f"  ERROR: VTU file not found at {vtu_path}. Run SU2 stage first.")
         return 1

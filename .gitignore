@@ -19,6 +19,11 @@ output/
 *.dat
 *.csv
 
+# Generated geometry outputs (source CAD in geometry/ is tracked)
+geometry/*.json
+geometry/*.npz
+geometry/*.stl
+
 # IDE
 .vscode/
 .idea/

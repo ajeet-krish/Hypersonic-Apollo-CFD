@@ -1,7 +1,14 @@
-"""Hypersonic blunt body validation runner.
+"""Unified CLI for the Hypersonic Body CFD pipeline.
 
-Runs triple validation (Sutton-Graves, Billig, Newtonian) and/or
-GCI mesh convergence study for the reference case.
+Replaces: run_geometry.py, run_mesh.py, run_postprocess.py,
+          run_reference.py, run_apollo.py, run_import_geometry.py,
+          run_validation.py
+
+Usage:
+    python run.py --case apollo-cm --step all
+    python run.py --case apollo-cm --step su2 --mach 15.6
+    python run.py --case generic --step geometry --mach 8.0
+    python run.py --case apollo-cm --step apollo
 """
 import argparse
 import sys
@@ -22,9 +29,9 @@ CONVERGENCE_STRATEGIES = ["direct", "euler-rans", "mach-ramp"]
 
 
 def main() -> int:
-    """Run validation pipeline stages."""
+    """Run hypersonic blunt body CFD pipeline."""
     parser = argparse.ArgumentParser(
-        description="Hypersonic blunt body validation and GCI study",
+        description="Hypersonic blunt body aerothermodynamics pipeline",
     )
     parser.add_argument(
         "--case",
@@ -45,10 +52,34 @@ def main() -> int:
         help="Flight altitude in meters (default: 30000)",
     )
     parser.add_argument(
+        "--aoa",
+        type=float,
+        default=0.0,
+        help="Angle of attack in degrees (default: 0.0)",
+    )
+    parser.add_argument(
+        "--tier",
+        choices=["draft", "standard", "high"],
+        default="standard",
+        help="Mesh refinement tier (default: standard)",
+    )
+    parser.add_argument(
         "--step",
-        choices=["validation", "gci", "all"],
-        default="validation",
-        help="Step to run: validation, gci, or all (default: validation)",
+        choices=[s.value for s in PipelineStage],
+        default=None,
+        help="Run a single pipeline step (default: all)",
+    )
+    parser.add_argument(
+        "--iterations",
+        type=int,
+        default=10000,
+        help="SU2 max iterations for RANS stage (default: 10000)",
+    )
+    parser.add_argument(
+        "--cfl",
+        type=float,
+        default=0.1,
+        help="SU2 CFL number (default: 0.1)",
     )
     parser.add_argument(
         "--strategy",
@@ -69,10 +100,10 @@ def main() -> int:
         help="Iterations for RANS stage (default: 10000)",
     )
     parser.add_argument(
-        "--cfl",
+        "--mach-ramp-start",
         type=float,
-        default=0.1,
-        help="SU2 CFL number (default: 0.1)",
+        default=5.0,
+        help="Starting Mach for mach-ramp strategy (default: 5.0)",
     )
     args = parser.parse_args()
 
@@ -82,18 +113,20 @@ def main() -> int:
         preset_fn=PRESETS[args.case],
         mach=args.mach,
         altitude=args.altitude,
+        aoa=args.aoa,
+        mesh_tier=args.tier,
+        su2_iterations=args.iterations,
+        su2_cfl=args.cfl,
         su2_strategy=args.strategy,
         su2_euler_iterations=args.euler_iterations,
         su2_rans_iterations=args.rans_iterations,
-        su2_cfl=args.cfl,
+        su2_mach_ramp_start=args.mach_ramp_start,
     )
 
-    if args.step == "all":
-        stages = [PipelineStage.VALIDATION, PipelineStage.GCI]
-    elif args.step == "validation":
-        stages = [PipelineStage.VALIDATION]
+    if args.step:
+        stages = [PipelineStage(args.step)]
     else:
-        stages = [PipelineStage.GCI]
+        stages = None
 
     return run_full_pipeline(config, stages)
 
