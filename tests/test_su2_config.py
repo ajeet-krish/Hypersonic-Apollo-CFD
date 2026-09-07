@@ -94,14 +94,34 @@ class TestSU2HypersonicConfigDefaults:
         assert config.freestream_turbulence_viscosity_ratio == 10.0
 
     def test_default_cfl_adapt_min(self):
-        """Default CFL adapt min should be 0.1."""
+        """Default CFL adapt min should be 0.001."""
         config = SU2HypersonicConfig()
-        assert config.cfl_adapt_min == 0.1
+        assert config.cfl_adapt_min == 0.001
 
     def test_default_cfl_adapt_max(self):
-        """Default CFL adapt max should be 2.0."""
+        """Default CFL adapt max should be 1.0."""
         config = SU2HypersonicConfig()
-        assert config.cfl_adapt_max == 2.0
+        assert config.cfl_adapt_max == 1.0
+
+    def test_default_cfl_adapt_increase(self):
+        """Default CFL adapt increase should be 1.2."""
+        config = SU2HypersonicConfig()
+        assert config.cfl_adapt_increase == 1.2
+
+    def test_default_conv_num_method(self):
+        """Default convective numerical method should be ROE."""
+        config = SU2HypersonicConfig()
+        assert config.conv_num_method == "ROE"
+
+    def test_default_linear_solver_error(self):
+        """Default linear solver error should be 1e-4."""
+        config = SU2HypersonicConfig()
+        assert config.linear_solver_error == 1e-4
+
+    def test_default_linear_solver_iter(self):
+        """Default linear solver iterations should be 50."""
+        config = SU2HypersonicConfig()
+        assert config.linear_solver_iter == 50
 
 
 class TestSU2HypersonicConfigWrite:
@@ -134,7 +154,7 @@ class TestSU2HypersonicConfigWrite:
             "MARKER_ISOTHERMAL= ( body, 2500.0 )",
             "MARKER_FAR= ( farfield )",
             "MARKER_SYM= ( sym )",
-            "CONV_NUM_METHOD_FLOW= AUSM",
+            "CONV_NUM_METHOD_FLOW= ROE",
             "MUSCL_FLOW= YES",
             "SLOPE_LIMITER_FLOW= VENKATAKRISHNAN",
             "ENTROPY_FIX_COEFF= 0.1",
@@ -144,6 +164,8 @@ class TestSU2HypersonicConfigWrite:
             "TIME_DISCRE_TURB= EULER_IMPLICIT",
             "LINEAR_SOLVER= BCGSTAB",
             "LINEAR_SOLVER_PREC= ILU",
+            "LINEAR_SOLVER_ERROR= 0.0001",
+            "LINEAR_SOLVER_ITER= 50",
             "CFL_NUMBER= 0.1",
             "CFL_ADAPT= YES",
             "ITER= 10000",
@@ -201,7 +223,7 @@ class TestSU2HypersonicConfigWrite:
         config = SU2HypersonicConfig()
         cfg_path = config.write(tmp_path)
         content = cfg_path.read_text()
-        assert "CFL_ADAPT_PARAM= ( 0.1, 2.0, 0.5, 1.5 )" in content
+        assert "CFL_ADAPT_PARAM= ( 0.001, 1.0, 0.5, 1.2 )" in content
 
     def test_cfg_cfl_adapt_params_custom(self, tmp_path: Path):
         """Custom CFL adapt parameters should appear in config."""
@@ -381,7 +403,7 @@ class TestWithCflAdapt:
         modified = original.with_cfl_adapt(
             cfl_min=0.05, cfl_max=3.0, decrease=0.5, increase=200.0,
         )
-        assert original.cfl_adapt_min == 0.1
+        assert original.cfl_adapt_min == 0.001
         assert modified.cfl_adapt_min == 0.05
         assert modified.cfl_adapt_max == 3.0
 

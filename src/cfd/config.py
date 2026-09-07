@@ -72,20 +72,20 @@ class SU2HypersonicConfig:
     # Numerics
     cfl_number: float = 0.1
     cfl_adapt: bool = True
-    cfl_adapt_min: float = 0.1
-    cfl_adapt_max: float = 2.0
+    cfl_adapt_min: float = 0.001
+    cfl_adapt_max: float = 1.0
     cfl_adapt_decrease: float = 0.5
-    cfl_adapt_increase: float = 1.5  # Critical for hypersonic stability; large jumps cause divergence
+    cfl_adapt_increase: float = 1.2  # Conservative growth for hypersonic stability
     iterations: int = 10000
     conv_residual_minval: float = -6.0
-    conv_num_method: str = "AUSM"
+    conv_num_method: str = "ROE"
     muscl: bool = True
     limiter: str = "VENKATAKRISHNAN"
     entropy_fix_coeff: float = 0.1
     linear_solver: str = "BCGSTAB"
     linear_solver_prec: str = "ILU"
-    linear_solver_error: float = 1e-6
-    linear_solver_iter: int = 10
+    linear_solver_error: float = 1e-4
+    linear_solver_iter: int = 50
 
     # Gas properties
     gamma: float = 1.4
@@ -371,10 +371,10 @@ MESH_FORMAT= SU2
 
     def with_cfl_adapt(
         self,
-        cfl_min: float = 0.01,
+        cfl_min: float = 0.001,
         cfl_max: float = 1.0,
         decrease: float = 0.5,
-        increase: float = 1.5,
+        increase: float = 1.2,
     ) -> "SU2HypersonicConfig":
         """Return a copy with different CFL adaptation parameters.
 

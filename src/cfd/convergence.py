@@ -2,7 +2,20 @@
 
 Implements Mach ramping from low Mach numbers to the target, using
 restart files between stages. Each stage can have different solver
-settings (CFL, MUSCL, linear solver) optimized for its Mach range.
+settings (CFL, MUSCL, linear solver, flux method) optimized for its
+Mach range.
+
+Strategy for M > 10 (e.g., M=15.6):
+    Stage 1: M=2.0 (subsonic/supersonic transition)
+    Stage 2: M=5.0 (supersonic)
+    Stage 3: M=10.0 (hypersonic)
+    Stage 4: M=target (full hypersonic)
+
+Each stage uses:
+    - Very conservative CFL (0.001-0.003) with adaptation enabled
+    - Tight linear solver tolerance (1e-4, 50 iterations)
+    - Roe flux for better shock stability
+    - First-order spatial accuracy (no MUSCL) for stability
 """
 from __future__ import annotations
 
@@ -19,6 +32,7 @@ class ConvergenceStage:
         cfl: CFL number
         iterations: Maximum iterations
         muscl: Whether to enable MUSCL reconstruction
+        conv_method: Convective flux method (ROE, AUSM, HLLC)
         linear_solver: Linear solver type (BCGSTAB, FGMRES)
         linear_solver_error: Linear solver tolerance
         linear_solver_iter: Linear solver max iterations
@@ -33,13 +47,14 @@ class ConvergenceStage:
     cfl: float
     iterations: int
     muscl: bool = False
+    conv_method: str = "ROE"
     linear_solver: str = "BCGSTAB"
-    linear_solver_error: float = 1e-2
-    linear_solver_iter: int = 20
+    linear_solver_error: float = 1e-4
+    linear_solver_iter: int = 50
     cfl_adapt_min: float = 0.0005
     cfl_adapt_max: float = 0.05
     cfl_adapt_decrease: float = 0.5
-    cfl_adapt_increase: float = 1.5
+    cfl_adapt_increase: float = 1.2
 
 
 @dataclass
@@ -56,9 +71,10 @@ class ConvergenceStrategy:
     def for_mach(cls, target_mach: float) -> ConvergenceStrategy:
         """Create appropriate strategy based on target Mach number.
 
-        For M <= 5: single stage (direct solve)
-        For M <= 10: two stages (M=5 ramp)
-        For M > 10: three stages (M=5 -> M=10 ramp)
+        For M <= 2: single stage (direct solve)
+        For 2 < M <= 5: two stages (M=2 ramp)
+        For 5 < M <= 10: three stages (M=2 -> M=5 ramp)
+        For M > 10: four stages (M=2 -> M=5 -> M=10 ramp)
 
         Args:
             target_mach: Target freestream Mach number.
@@ -66,15 +82,17 @@ class ConvergenceStrategy:
         Returns:
             ConvergenceStrategy with appropriate stages.
         """
-        if target_mach <= 5.0:
+        if target_mach <= 2.0:
             return cls._single_stage(target_mach)
-        elif target_mach <= 10.0:
+        elif target_mach <= 5.0:
             return cls._two_stage(target_mach)
-        else:
+        elif target_mach <= 10.0:
             return cls._three_stage(target_mach)
+        else:
+            return cls._four_stage(target_mach)
 
     @classmethod
-    def mach_ramp(cls, target_mach: float, n_stages: int = 3) -> ConvergenceStrategy:
+    def mach_ramp(cls, target_mach: float, n_stages: int = 4) -> ConvergenceStrategy:
         """Create a Mach ramping strategy.
 
         Generates intermediate Mach numbers evenly spaced from M=2 to target_mach.
@@ -98,19 +116,24 @@ class ConvergenceStrategy:
         stages = []
         for i, mach_val in enumerate(mach_numbers):
             is_last = i == len(mach_numbers) - 1
+            # Progressive CFL: start very conservative, allow growth
+            cfl_val = 0.001 + 0.001 * i
+            # Progressive iterations: more for later stages
+            iters = 5000 if is_last else 3000 + 1000 * i
             stage = ConvergenceStage(
                 name=f"Stage {i + 1}: M={mach_val:.1f}",
                 mach=mach_val,
-                cfl=0.005,
-                iterations=10000 if is_last else 3000,
+                cfl=cfl_val,
+                iterations=iters,
                 muscl=False,
+                conv_method="ROE",
                 linear_solver="BCGSTAB",
-                linear_solver_error=1e-4 if is_last else 1e-2,
-                linear_solver_iter=40 if is_last else 20,
+                linear_solver_error=1e-4,
+                linear_solver_iter=50,
                 cfl_adapt_min=0.0005,
                 cfl_adapt_max=0.05,
                 cfl_adapt_decrease=0.5,
-                cfl_adapt_increase=1.5,
+                cfl_adapt_increase=1.2,
             )
             stages.append(stage)
 
@@ -118,7 +141,7 @@ class ConvergenceStrategy:
 
     @classmethod
     def _single_stage(cls, target_mach: float) -> ConvergenceStrategy:
-        """Create a single-stage direct solve for M <= 5.
+        """Create a single-stage direct solve for M <= 2.
 
         Args:
             target_mach: Target freestream Mach number.
@@ -132,21 +155,22 @@ class ConvergenceStrategy:
             cfl=0.01,
             iterations=5000,
             muscl=False,
+            conv_method="ROE",
             linear_solver="BCGSTAB",
-            linear_solver_error=1e-2,
-            linear_solver_iter=20,
+            linear_solver_error=1e-4,
+            linear_solver_iter=50,
             cfl_adapt_min=0.0005,
             cfl_adapt_max=0.05,
             cfl_adapt_decrease=0.5,
-            cfl_adapt_increase=1.5,
+            cfl_adapt_increase=1.2,
         )
         return cls(stages=[stage])
 
     @classmethod
     def _two_stage(cls, target_mach: float) -> ConvergenceStrategy:
-        """Create a two-stage ramp for 5 < M <= 10.
+        """Create a two-stage ramp for 2 < M <= 5.
 
-        Stage 1: M=5.0, Stage 2: target_mach with restart.
+        Stage 1: M=2.0, Stage 2: target_mach with restart.
 
         Args:
             target_mach: Target freestream Mach number.
@@ -155,40 +179,42 @@ class ConvergenceStrategy:
             ConvergenceStrategy with two stages.
         """
         stage1 = ConvergenceStage(
-            name="M=5.0 first-order",
-            mach=5.0,
-            cfl=0.005,
-            iterations=3000,
+            name="M=2.0 first-order",
+            mach=2.0,
+            cfl=0.001,
+            iterations=5000,
             muscl=False,
+            conv_method="ROE",
             linear_solver="BCGSTAB",
-            linear_solver_error=1e-2,
-            linear_solver_iter=20,
+            linear_solver_error=1e-4,
+            linear_solver_iter=50,
             cfl_adapt_min=0.0005,
-            cfl_adapt_max=0.05,
+            cfl_adapt_max=0.02,
             cfl_adapt_decrease=0.5,
-            cfl_adapt_increase=1.5,
+            cfl_adapt_increase=1.2,
         )
         stage2 = ConvergenceStage(
             name=f"M={target_mach:.1f} restart",
             mach=target_mach,
-            cfl=0.005,
-            iterations=5000,
+            cfl=0.002,
+            iterations=8000,
             muscl=False,
+            conv_method="ROE",
             linear_solver="BCGSTAB",
-            linear_solver_error=1e-2,
-            linear_solver_iter=20,
-            cfl_adapt_min=0.0005,
-            cfl_adapt_max=0.05,
+            linear_solver_error=1e-4,
+            linear_solver_iter=50,
+            cfl_adapt_min=0.001,
+            cfl_adapt_max=0.03,
             cfl_adapt_decrease=0.5,
-            cfl_adapt_increase=1.5,
+            cfl_adapt_increase=1.2,
         )
         return cls(stages=[stage1, stage2])
 
     @classmethod
     def _three_stage(cls, target_mach: float) -> ConvergenceStrategy:
-        """Create a three-stage ramp for M > 10.
+        """Create a three-stage ramp for 5 < M <= 10.
 
-        Stage 1: M=5.0, Stage 2: M=10.0, Stage 3: target_mach with restart.
+        Stage 1: M=2.0, Stage 2: M=5.0, Stage 3: target_mach with restart.
 
         Args:
             target_mach: Target freestream Mach number.
@@ -197,45 +223,122 @@ class ConvergenceStrategy:
             ConvergenceStrategy with three stages.
         """
         stage1 = ConvergenceStage(
-            name="M=5.0 first-order",
-            mach=5.0,
-            cfl=0.005,
-            iterations=3000,
-            muscl=False,
-            linear_solver="BCGSTAB",
-            linear_solver_error=1e-2,
-            linear_solver_iter=20,
-            cfl_adapt_min=0.0005,
-            cfl_adapt_max=0.05,
-            cfl_adapt_decrease=0.5,
-            cfl_adapt_increase=1.5,
-        )
-        stage2 = ConvergenceStage(
-            name="M=10.0 restart",
-            mach=10.0,
-            cfl=0.005,
+            name="M=2.0 first-order",
+            mach=2.0,
+            cfl=0.001,
             iterations=5000,
             muscl=False,
+            conv_method="ROE",
             linear_solver="BCGSTAB",
-            linear_solver_error=1e-2,
-            linear_solver_iter=20,
+            linear_solver_error=1e-4,
+            linear_solver_iter=50,
             cfl_adapt_min=0.0005,
-            cfl_adapt_max=0.05,
+            cfl_adapt_max=0.02,
             cfl_adapt_decrease=0.5,
-            cfl_adapt_increase=1.5,
+            cfl_adapt_increase=1.2,
+        )
+        stage2 = ConvergenceStage(
+            name="M=5.0 restart",
+            mach=5.0,
+            cfl=0.002,
+            iterations=5000,
+            muscl=False,
+            conv_method="ROE",
+            linear_solver="BCGSTAB",
+            linear_solver_error=1e-4,
+            linear_solver_iter=50,
+            cfl_adapt_min=0.001,
+            cfl_adapt_max=0.03,
+            cfl_adapt_decrease=0.5,
+            cfl_adapt_increase=1.2,
         )
         stage3 = ConvergenceStage(
             name=f"M={target_mach:.1f} restart",
             mach=target_mach,
-            cfl=0.005,
-            iterations=10000,
+            cfl=0.003,
+            iterations=8000,
             muscl=False,
+            conv_method="ROE",
             linear_solver="BCGSTAB",
-            linear_solver_error=1e-2,
-            linear_solver_iter=20,
-            cfl_adapt_min=0.0005,
+            linear_solver_error=1e-4,
+            linear_solver_iter=50,
+            cfl_adapt_min=0.001,
             cfl_adapt_max=0.05,
             cfl_adapt_decrease=0.5,
-            cfl_adapt_increase=1.5,
+            cfl_adapt_increase=1.2,
         )
         return cls(stages=[stage1, stage2, stage3])
+
+    @classmethod
+    def _four_stage(cls, target_mach: float) -> ConvergenceStrategy:
+        """Create a four-stage ramp for M > 10.
+
+        Stage 1: M=2.0, Stage 2: M=5.0, Stage 3: M=10.0, Stage 4: target_mach.
+
+        Args:
+            target_mach: Target freestream Mach number.
+
+        Returns:
+            ConvergenceStrategy with four stages.
+        """
+        stage1 = ConvergenceStage(
+            name="M=2.0 first-order",
+            mach=2.0,
+            cfl=0.001,
+            iterations=5000,
+            muscl=False,
+            conv_method="ROE",
+            linear_solver="BCGSTAB",
+            linear_solver_error=1e-4,
+            linear_solver_iter=50,
+            cfl_adapt_min=0.0005,
+            cfl_adapt_max=0.02,
+            cfl_adapt_decrease=0.5,
+            cfl_adapt_increase=1.2,
+        )
+        stage2 = ConvergenceStage(
+            name="M=5.0 restart",
+            mach=5.0,
+            cfl=0.002,
+            iterations=5000,
+            muscl=False,
+            conv_method="ROE",
+            linear_solver="BCGSTAB",
+            linear_solver_error=1e-4,
+            linear_solver_iter=50,
+            cfl_adapt_min=0.001,
+            cfl_adapt_max=0.03,
+            cfl_adapt_decrease=0.5,
+            cfl_adapt_increase=1.2,
+        )
+        stage3 = ConvergenceStage(
+            name="M=10.0 restart",
+            mach=10.0,
+            cfl=0.003,
+            iterations=8000,
+            muscl=False,
+            conv_method="ROE",
+            linear_solver="BCGSTAB",
+            linear_solver_error=1e-4,
+            linear_solver_iter=50,
+            cfl_adapt_min=0.001,
+            cfl_adapt_max=0.04,
+            cfl_adapt_decrease=0.5,
+            cfl_adapt_increase=1.2,
+        )
+        stage4 = ConvergenceStage(
+            name=f"M={target_mach:.1f} restart",
+            mach=target_mach,
+            cfl=0.003,
+            iterations=15000,
+            muscl=False,
+            conv_method="ROE",
+            linear_solver="BCGSTAB",
+            linear_solver_error=1e-4,
+            linear_solver_iter=50,
+            cfl_adapt_min=0.001,
+            cfl_adapt_max=0.05,
+            cfl_adapt_decrease=0.5,
+            cfl_adapt_increase=1.2,
+        )
+        return cls(stages=[stage1, stage2, stage3, stage4])

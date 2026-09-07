@@ -283,17 +283,21 @@ class SU2Solver:
         base_config: SU2HypersonicConfig,
         workdir: Path,
         mesh_filename: str = "mesh.su2",
+        max_retries: int = 3,
     ) -> SU2Results:
         """Execute a multi-stage convergence strategy.
 
         Runs each stage sequentially, using the previous stage's restart file
-        as the initial condition for the next stage.
+        as the initial condition for the next stage. Includes divergence
+        detection: if residuals increase after a stage, CFL is reduced and
+        the stage is retried.
 
         Args:
             strategy: Multi-stage convergence strategy to execute.
             base_config: Base SU2 configuration (freestream, wall, gas, etc.).
             workdir: Working directory for simulation files.
             mesh_filename: Name of the .su2 mesh file.
+            max_retries: Maximum number of retries on divergence (default 3).
 
         Returns:
             Results from the final stage.
@@ -318,6 +322,7 @@ class SU2Solver:
             cfg.cfl_number = stage.cfl
             cfg.iterations = stage.iterations
             cfg.muscl = stage.muscl
+            cfg.conv_num_method = stage.conv_method
             cfg.linear_solver = stage.linear_solver
             cfg.linear_solver_error = stage.linear_solver_error
             cfg.linear_solver_iter = stage.linear_solver_iter
@@ -351,11 +356,10 @@ class SU2Solver:
             if not is_first and not is_last:
                 cfg.output_files = ("RESTART",)
 
-            # Write config and run
-            cfg_path = cfg.write(workdir, mesh_filename=mesh_filename)
-            logger.info("Config: %s", cfg_path)
-
-            results = self.run(cfg_path, workdir, timeout=7200)
+            # Write config and run with divergence detection
+            results = self._run_with_retry(
+                cfg, workdir, mesh_filename, stage, max_retries,
+            )
 
             logger.info(
                 "Stage %d complete: %d iters, drop=%.2f orders, "
@@ -374,6 +378,66 @@ class SU2Solver:
             final_results = results
 
         return final_results
+
+    def _run_with_retry(
+        self,
+        cfg: SU2HypersonicConfig,
+        workdir: Path,
+        mesh_filename: str,
+        stage: ConvergenceStage,
+        max_retries: int,
+    ) -> SU2Results:
+        """Run a stage with automatic CFL reduction on divergence.
+
+        If residuals increase (residual_drop < 0), the CFL is reduced
+        by 10x and the stage is retried up to max_retries times.
+
+        Args:
+            cfg: SU2 configuration for this stage.
+            workdir: Working directory.
+            mesh_filename: Name of the mesh file.
+            stage: Convergence stage definition.
+            max_retries: Maximum retries on divergence.
+
+        Returns:
+            Results from the best attempt.
+        """
+        current_cfl = cfg.cfl_number
+        best_results = SU2Results()
+        best_cfl = current_cfl
+
+        for attempt in range(max_retries + 1):
+            if attempt > 0:
+                # Reduce CFL by 10x for each retry
+                current_cfl = current_cfl * 0.1
+                cfg.cfl_number = current_cfl
+                cfg.cfl_adapt_min = max(0.0001, cfg.cfl_adapt_min * 0.1)
+                logger.warning(
+                    "Divergence detected. Retry %d/%d with CFL=%.6f",
+                    attempt, max_retries, current_cfl,
+                )
+
+            # Write config and run
+            cfg_path = cfg.write(workdir, mesh_filename=mesh_filename)
+            results = self.run(cfg_path, workdir, timeout=7200)
+
+            # Track best results (highest residual drop)
+            if results.residual_drop > best_results.residual_drop:
+                best_results = results
+                best_cfl = cfg.cfl_number
+
+            # Check for divergence: residuals increased or no improvement
+            if results.residual_drop > 0.5:
+                # Good convergence, no retry needed
+                break
+
+            if results.residual_drop < 0 and attempt < max_retries:
+                logger.warning(
+                    "Residuals increased (drop=%.2f). Will retry with lower CFL.",
+                    results.residual_drop,
+                )
+
+        return best_results
 
     @staticmethod
     def _find_restart_file(workdir: Path) -> Path | None:

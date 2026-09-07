@@ -293,7 +293,13 @@ def run_su2_stage(config: CaseConfig) -> int:
 
     from cfd.convergence import ConvergenceStrategy
 
-    strategy = config.convergence_strategy or ConvergenceStrategy.for_mach(config.mach)
+    # Use mach_ramp for high-Mach cases (starts at M=2 for gentle initialization)
+    if config.convergence_strategy:
+        strategy = config.convergence_strategy
+    elif config.mach > 10.0:
+        strategy = ConvergenceStrategy.mach_ramp(config.mach, n_stages=4)
+    else:
+        strategy = ConvergenceStrategy.for_mach(config.mach)
     print(f"  Strategy: {len(strategy.stages)} stages")
     for i, stage in enumerate(strategy.stages):
         print(f"    {i + 1}. {stage.name} (M={stage.mach}, "
@@ -341,16 +347,15 @@ def _run_euler_rans(
     fo_config = su2_config.as_first_order_rans()
     fo_config.iterations = config.su2_euler_iterations
     # Use very conservative CFL for initial stability
-    fo_cfl = min(config.su2_cfl, 0.01)
+    fo_cfl = min(config.su2_cfl, 0.001)
     fo_config = fo_config.with_cfl(fo_cfl)
     fo_config = fo_config.with_cfl_adapt(
-        cfl_min=0.005, cfl_max=2.0, decrease=0.5, increase=10.0,
+        cfl_min=0.0005, cfl_max=0.02, decrease=0.5, increase=1.2,
     )
-    # Use BCGSTAB linear solver (more robust than FGMRES for hypersonic)
-    # and relax linear solver tolerance for initial stability
+    # Use BCGSTAB linear solver with tight tolerance for hypersonic
     fo_config.linear_solver = "BCGSTAB"
-    fo_config.linear_solver_error = 1e-2
-    fo_config.linear_solver_iter = 20
+    fo_config.linear_solver_error = 1e-4
+    fo_config.linear_solver_iter = 50
     from cfd.config import SU2HypersonicConfig as _Cfg
     fo_output = _Cfg(**fo_config.__dict__)
     fo_output.output_files = ("RESTART",)
@@ -390,15 +395,15 @@ def _run_euler_rans(
     rans_config = su2_config.with_restart(Path("solution.dat"))
     rans_config.muscl = False  # Stay first-order for stability
     rans_config.iterations = config.su2_rans_iterations
-    # Keep same CFL as stage 1 to avoid restart divergence
-    rans_cfl = min(config.su2_cfl, 0.01)
+    # Use conservative CFL for restart stability
+    rans_cfl = min(config.su2_cfl, 0.002)
     rans_config = rans_config.with_cfl(rans_cfl)
     rans_config = rans_config.with_cfl_adapt(
-        cfl_min=0.005, cfl_max=1.0, decrease=0.5, increase=3.0,
+        cfl_min=0.001, cfl_max=0.03, decrease=0.5, increase=1.2,
     )
     rans_config.linear_solver = "BCGSTAB"
     rans_config.linear_solver_error = 1e-4
-    rans_config.linear_solver_iter = 40
+    rans_config.linear_solver_iter = 50
 
     cfg_path = rans_config.write(su2_dir, mesh_filename=mesh_filename)
     print(f"  Config: {cfg_path}")
