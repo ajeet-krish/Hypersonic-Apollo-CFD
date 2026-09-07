@@ -131,7 +131,7 @@ class ConvergenceStrategy:
                 linear_solver_error=1e-4,
                 linear_solver_iter=50,
                 cfl_adapt_min=0.0005,
-                cfl_adapt_max=0.05,
+                cfl_adapt_max=1.0,
                 cfl_adapt_decrease=0.5,
                 cfl_adapt_increase=1.2,
             )
@@ -160,7 +160,7 @@ class ConvergenceStrategy:
             linear_solver_error=1e-4,
             linear_solver_iter=50,
             cfl_adapt_min=0.0005,
-            cfl_adapt_max=0.05,
+                cfl_adapt_max=1.0,
             cfl_adapt_decrease=0.5,
             cfl_adapt_increase=1.2,
         )
@@ -188,10 +188,10 @@ class ConvergenceStrategy:
             linear_solver="BCGSTAB",
             linear_solver_error=1e-4,
             linear_solver_iter=50,
-            cfl_adapt_min=0.0005,
-            cfl_adapt_max=0.02,
-            cfl_adapt_decrease=0.5,
-            cfl_adapt_increase=1.2,
+                cfl_adapt_min=0.0005,
+                cfl_adapt_max=1.0,
+                cfl_adapt_decrease=0.5,
+                cfl_adapt_increase=1.2,
         )
         stage2 = ConvergenceStage(
             name=f"M={target_mach:.1f} restart",
@@ -203,10 +203,10 @@ class ConvergenceStrategy:
             linear_solver="BCGSTAB",
             linear_solver_error=1e-4,
             linear_solver_iter=50,
-            cfl_adapt_min=0.001,
-            cfl_adapt_max=0.03,
-            cfl_adapt_decrease=0.5,
-            cfl_adapt_increase=1.2,
+                cfl_adapt_min=0.001,
+                cfl_adapt_max=1.0,
+                cfl_adapt_decrease=0.5,
+                cfl_adapt_increase=1.2,
         )
         return cls(stages=[stage1, stage2])
 
@@ -233,7 +233,7 @@ class ConvergenceStrategy:
             linear_solver_error=1e-4,
             linear_solver_iter=50,
             cfl_adapt_min=0.0005,
-            cfl_adapt_max=0.02,
+                cfl_adapt_max=1.0,
             cfl_adapt_decrease=0.5,
             cfl_adapt_increase=1.2,
         )
@@ -248,7 +248,7 @@ class ConvergenceStrategy:
             linear_solver_error=1e-4,
             linear_solver_iter=50,
             cfl_adapt_min=0.001,
-            cfl_adapt_max=0.03,
+                cfl_adapt_max=1.0,
             cfl_adapt_decrease=0.5,
             cfl_adapt_increase=1.2,
         )
@@ -263,7 +263,7 @@ class ConvergenceStrategy:
             linear_solver_error=1e-4,
             linear_solver_iter=50,
             cfl_adapt_min=0.001,
-            cfl_adapt_max=0.05,
+                cfl_adapt_max=1.0,
             cfl_adapt_decrease=0.5,
             cfl_adapt_increase=1.2,
         )
@@ -292,7 +292,7 @@ class ConvergenceStrategy:
             linear_solver_error=1e-4,
             linear_solver_iter=50,
             cfl_adapt_min=0.0005,
-            cfl_adapt_max=0.02,
+                cfl_adapt_max=1.0,
             cfl_adapt_decrease=0.5,
             cfl_adapt_increase=1.2,
         )
@@ -307,7 +307,7 @@ class ConvergenceStrategy:
             linear_solver_error=1e-4,
             linear_solver_iter=50,
             cfl_adapt_min=0.001,
-            cfl_adapt_max=0.03,
+                cfl_adapt_max=1.0,
             cfl_adapt_decrease=0.5,
             cfl_adapt_increase=1.2,
         )
@@ -322,7 +322,7 @@ class ConvergenceStrategy:
             linear_solver_error=1e-4,
             linear_solver_iter=50,
             cfl_adapt_min=0.001,
-            cfl_adapt_max=0.04,
+                cfl_adapt_max=1.0,
             cfl_adapt_decrease=0.5,
             cfl_adapt_increase=1.2,
         )
@@ -337,7 +337,7 @@ class ConvergenceStrategy:
             linear_solver_error=1e-4,
             linear_solver_iter=50,
             cfl_adapt_min=0.001,
-            cfl_adapt_max=0.05,
+                cfl_adapt_max=1.0,
             cfl_adapt_decrease=0.5,
             cfl_adapt_increase=1.2,
         )
