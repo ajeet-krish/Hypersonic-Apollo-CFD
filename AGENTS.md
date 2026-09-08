@@ -1,4 +1,4 @@
-# AGENTS.md -- Hypersonic Body CFD
+# AGENTS.md - Hypersonic Body CFD
 
 ## Quick Start
 
