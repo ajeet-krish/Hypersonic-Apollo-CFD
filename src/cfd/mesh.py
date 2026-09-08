@@ -1,4 +1,4 @@
-"""Gmsh O-grid mesh generation for spherically-blunted cones.
+"""Gmsh mesh generation for spherically-blunted cones (O-grid and C-grid topologies).
 
 Produces a 2D axisymmetric mesh in the (x, r) plane with:
   - Body-conforming elliptical (O-grid) farfield boundary
@@ -35,7 +35,7 @@ from geometry.blunt_body import generate_contour
 from geometry.config import BluntBodyConfig
 from validation.billig import billig_blunted_cone
 
-from .mesh_config import MeshConfig, OGridDomain
+from .mesh_config import MeshConfig, CGridDomain, OGridDomain
 
 if TYPE_CHECKING:
     pass
@@ -265,6 +265,655 @@ def _add_wake_refinement(
     gmsh.model.mesh.field.setNumber(field_tag, "VOut", 0.3 * R_nose * tier_mult)
 
 
+def _build_cgrid_domain(
+    config: BluntBodyConfig,
+    mesh_config: MeshConfig,
+) -> CGridDomain:
+    """Compute C-grid domain parameters from body geometry.
+
+    The C-grid domain wraps the blunt body with an upper boundary
+    that is an elliptical arc, a nose-cap closure upstream, and
+    extends to an outflow boundary downstream.
+
+    Args:
+        config: Blunt body geometry parameters.
+        mesh_config: Mesh configuration with domain factor multipliers.
+
+    Returns:
+        CGridDomain with all C-grid boundary parameters.
+    """
+    R_nose = config.R_nose
+    body_length = config.computed_body_length
+    max_radius = config.max_radius
+
+    x_inflow = -mesh_config.upstream_factor * R_nose
+    x_outflow = body_length + mesh_config.downstream_factor * (2.0 * max_radius)
+    r_upper = mesh_config.lateral_factor * R_nose
+
+    # Upper boundary: elliptical arc centered at midpoint of inflow-outflow
+    upper_center_x = (x_inflow + x_outflow) / 2.0
+    upper_center_r = 0.0
+    upper_semi_major = (x_outflow - x_inflow) / 2.0
+    upper_semi_minor = r_upper
+
+    # Nose cap: straight line from (x_inflow, 0) to body nose (0, R_nose)
+    # Use midpoint of the closure line as the nose cap center
+    nose_cap_x = (x_inflow + 0.0) / 2.0
+    nose_cap_r = (0.0 + R_nose) / 2.0
+
+    return CGridDomain(
+        x_inflow=x_inflow,
+        r_inflow_upper=upper_semi_minor,
+        x_outflow=x_outflow,
+        r_outflow_upper=upper_semi_minor,
+        upper_center_x=upper_center_x,
+        upper_center_r=upper_center_r,
+        upper_semi_major=upper_semi_major,
+        upper_semi_minor=upper_semi_minor,
+        nose_cap_x=nose_cap_x,
+        nose_cap_r=nose_cap_r,
+        x_nose=0.0,
+        x_base=body_length,
+        r_base=config.base_radius,
+    )
+
+
+def _generate_cgrid_upper_boundary_points(
+    cx: float,
+    cr: float,
+    a: float,
+    b: float,
+    n: int = 40,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Generate points on the upper half of an ellipse for C-grid upper boundary.
+
+    Produces points on the upper half of an ellipse (theta from 0 to pi),
+    suitable for use as a Gmsh spline. This is the C-grid equivalent of
+    _generate_ellipse_points but returns only the upper half.
+
+    Args:
+        cx: Center x-coordinate.
+        cr: Center r-coordinate.
+        a: Semi-major axis (axial).
+        b: Semi-minor axis (radial).
+        n: Number of points (default 40).
+
+    Returns:
+        (x, r) arrays of upper-half ellipse points, ordered from
+        theta=0 (rightmost) to theta=pi (leftmost).
+    """
+    theta = np.linspace(0, np.pi, n)
+    x = cx + a * np.cos(theta)
+    r = cr + b * np.sin(theta)
+    return x, r
+
+
+def _generate_cgrid_nose_closure_points(
+    x_inflow: float,
+    x_nose: float,
+    r_nose: float,
+    n: int = 20,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Generate points along a straight line for C-grid nose closure.
+
+    Produces n points evenly spaced along a straight line from
+    (x_inflow, 0) to (x_nose, r_nose). These points form the nose
+    closure of the C-grid topology.
+
+    Args:
+        x_inflow: Axial coordinate of the inflow boundary (m).
+        x_nose: Axial coordinate of the body nose (m).
+        r_nose: Radial coordinate of the body nose (m).
+        n: Number of points (default 20).
+
+    Returns:
+        (x, r) arrays of the nose closure line points, ordered from
+        (x_inflow, 0) to (x_nose, r_nose).
+    """
+    x = np.linspace(x_inflow, x_nose, n)
+    r = np.linspace(0.0, r_nose, n)
+    return x, r
+
+
+def generate_cgrid_mesh(
+    config: BluntBodyConfig,
+    mesh_config: MeshConfig,
+    mach: float,
+    output_path: Path,
+    aoa: float = 0.0,
+) -> Path:
+    """Generate a 2D C-grid Gmsh mesh for a spherically-blunted cone.
+
+    Creates the computational domain with:
+        - Body contour (sphere + cone) from geometry generation
+        - C-grid farfield: upper elliptical arc, nose closure, outflow
+        - Symmetry axis along r=0 (axisymmetric) or full domain (full2d)
+        - Structured boundary-layer cells at the body wall
+        - Shock-region refinement from Billig correlation
+        - Sphere-cone junction refinement
+        - Wake refinement downstream of body base
+
+    The C-grid wraps around the body nose and extends far downstream,
+    providing distinct inflow and outflow boundaries that improve
+    hypersonic boundary condition treatment.
+
+    When *aoa* != 0 the domain is forced to full2d regardless of the
+    ``mesh_config.domain_type`` setting.
+
+    Args:
+        config: Blunt body geometry configuration.
+        mesh_config: Mesh refinement configuration.
+        mach: Freestream Mach number (for shock refinement).
+        output_path: Output .su2 mesh file path.
+        aoa: Angle of attack in degrees (default 0.0).
+
+    Returns:
+        Path to the generated .su2 mesh file.
+
+    Raises:
+        RuntimeError: If mesh generation fails.
+    """
+    import gmsh
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # --- Angle of attack handling ---
+    if aoa != 0.0:
+        if mesh_config.domain_type == "axisymmetric":
+            print(
+                f"  WARNING: axisymmetric domain requested but aoa={aoa} deg; "
+                "forcing full2d"
+            )
+        mesh_config = MeshConfig.for_tier(
+            mesh_config.mesh_tier,
+            domain_type="full2d",
+        )
+
+    try:
+        gmsh.initialize()
+        gmsh.option.setNumber("General.Terminal", 0)
+        gmsh.model.add("blunt_body_cgrid")
+
+        # --- Body contour ---
+        x_body, r_body = generate_contour(config)
+        R_nose = config.R_nose
+        n_body = len(x_body)
+
+        # --- C-grid domain computation ---
+        domain = _build_cgrid_domain(config, mesh_config)
+
+        # --- Boundary layer geometry (identical to O-grid) ---
+        first_h = mesh_config.resolve_first_cell_height(R_nose)
+        n_bl = mesh_config.n_bl
+        ratio = mesh_config.bl_growth_ratio
+
+        # Compute outward normals at each body point.
+        normals = np.empty((n_body, 2))
+        for i in range(n_body):
+            if i == 0:
+                dx = x_body[1] - x_body[0]
+                dr = r_body[1] - r_body[0]
+            elif i == n_body - 1:
+                dx = x_body[-1] - x_body[-2]
+                dr = r_body[-1] - r_body[-2]
+            else:
+                dx = x_body[i + 1] - x_body[i - 1]
+                dr = r_body[i + 1] - r_body[i - 1]
+            mag = np.hypot(dx, dr)
+            if mag < 1e-15:
+                normals[i] = [0.0, 1.0]
+            else:
+                n = np.array([-dr / mag, dx / mag])
+                if n[1] < 0:
+                    n = -n
+                normals[i] = n
+
+        # --- Create BL layer points ---
+        bl_nodes: list[list[int]] = []
+        bl_node_coords: list[list[tuple[float, float]]] = []
+        cumulative_h = np.zeros(n_bl + 1)
+        for k in range(1, n_bl + 1):
+            cumulative_h[k] = cumulative_h[k - 1] + first_h * ratio ** (k - 1)
+
+        for i in range(n_body):
+            layer_pts: list[int] = []
+            layer_coords: list[tuple[float, float]] = []
+            for k in range(n_bl + 1):
+                x = x_body[i] + normals[i, 0] * cumulative_h[k]
+                r = r_body[i] + normals[i, 1] * cumulative_h[k]
+                pt = gmsh.model.geo.addPoint(float(x), float(r), 0)
+                layer_pts.append(pt)
+                layer_coords.append((float(x), float(r)))
+            bl_nodes.append(layer_pts)
+            bl_node_coords.append(layer_coords)
+
+        # --- Create BL triangular surfaces (identical to O-grid) ---
+        bl_surfaces: list[int] = []
+        for i in range(n_body - 1):
+            for k in range(n_bl):
+                bl = bl_nodes[i][k]
+                br = bl_nodes[i + 1][k]
+                tr = bl_nodes[i + 1][k + 1]
+                tl = bl_nodes[i][k + 1]
+                loop1 = gmsh.model.geo.addCurveLoop([
+                    gmsh.model.geo.addLine(bl, br),
+                    gmsh.model.geo.addLine(br, tr),
+                    gmsh.model.geo.addLine(tr, bl),
+                ])
+                surf1 = gmsh.model.geo.addPlaneSurface([loop1])
+                bl_surfaces.append(surf1)
+
+                loop2 = gmsh.model.geo.addCurveLoop([
+                    gmsh.model.geo.addLine(bl, tr),
+                    gmsh.model.geo.addLine(tr, tl),
+                    gmsh.model.geo.addLine(tl, bl),
+                ])
+                surf2 = gmsh.model.geo.addPlaneSurface([loop2])
+                bl_surfaces.append(surf2)
+
+        # --- Full 2D: mirror body and BL to lower half ---
+        is_full2d = mesh_config.domain_type == "full2d"
+
+        if is_full2d:
+            x_lower = x_body[::-1]
+            r_lower = -r_body[::-1]
+            n_lower = len(x_lower)
+
+            lower_bl_nodes: list[list[int]] = []
+            for i in range(n_body):
+                layer_pts: list[int] = []
+                for k in range(n_bl + 1):
+                    x = float(bl_node_coords[i][k][0])
+                    r = float(-bl_node_coords[i][k][1])
+                    pt = gmsh.model.geo.addPoint(x, r, 0)
+                    layer_pts.append(pt)
+                lower_bl_nodes.append(layer_pts)
+
+            for i in range(n_body - 1):
+                for k in range(n_bl):
+                    bl = lower_bl_nodes[i][k]
+                    br = lower_bl_nodes[i + 1][k]
+                    tr = lower_bl_nodes[i + 1][k + 1]
+                    tl = lower_bl_nodes[i][k + 1]
+                    loop1 = gmsh.model.geo.addCurveLoop([
+                        gmsh.model.geo.addLine(bl, tr),
+                        gmsh.model.geo.addLine(tr, br),
+                        gmsh.model.geo.addLine(br, bl),
+                    ])
+                    surf1 = gmsh.model.geo.addPlaneSurface([loop1])
+                    bl_surfaces.append(surf1)
+
+                    loop2 = gmsh.model.geo.addCurveLoop([
+                        gmsh.model.geo.addLine(bl, tl),
+                        gmsh.model.geo.addLine(tl, tr),
+                        gmsh.model.geo.addLine(tr, bl),
+                    ])
+                    surf2 = gmsh.model.geo.addPlaneSurface([loop2])
+                    bl_surfaces.append(surf2)
+
+        # ============================================================
+        #  C-GRID BOUNDARY + PHYSICAL GROUPS
+        # ============================================================
+        offset_curves: list[int]
+
+        if is_full2d:
+            # ---- Full 2D C-grid: mirror upper boundary to lower half ----
+            # Follows the SAME annular surface pattern as the O-grid full2d:
+            # - Inner boundary: BL offset (closed curve with nose/base connections)
+            # - Outer boundary: C-shaped farfield (closed curve wrapping around nose)
+            # - Single surface with BL hole
+            #
+            # Upper boundary: elliptical arc from outflow to inflow (upper half)
+            n_upper = 41
+            upper_x, upper_r = _generate_cgrid_upper_boundary_points(
+                domain.upper_center_x,
+                domain.upper_center_r,
+                domain.upper_semi_major,
+                domain.upper_semi_minor,
+                n=n_upper,
+            )
+
+            upper_pts: list[int] = []
+            for j in range(n_upper):
+                pt = gmsh.model.geo.addPoint(
+                    float(upper_x[j]), float(upper_r[j]), 0,
+                )
+                upper_pts.append(pt)
+            upper_spline = gmsh.model.geo.addSpline(upper_pts)
+
+            # Lower boundary: mirror of upper (negate r, reverse order)
+            lower_pts: list[int] = []
+            for j in range(n_upper - 1, -1, -1):
+                pt = gmsh.model.geo.addPoint(
+                    float(upper_x[j]), float(-upper_r[j]), 0,
+                )
+                lower_pts.append(pt)
+            lower_spline = gmsh.model.geo.addSpline(lower_pts)
+
+            # Nose closure: upper half (inflow to body nose upper)
+            nose_x, nose_r = _generate_cgrid_nose_closure_points(
+                domain.x_inflow,
+                domain.x_nose,
+                R_nose,
+                n=20,
+            )
+            nose_upper_pts: list[int] = []
+            for j in range(len(nose_x)):
+                pt = gmsh.model.geo.addPoint(
+                    float(nose_x[j]), float(nose_r[j]), 0,
+                )
+                nose_upper_pts.append(pt)
+            nose_upper_spline = gmsh.model.geo.addSpline(nose_upper_pts)
+
+            # Nose closure: lower half (body nose lower to inflow, reversed)
+            nose_lower_pts: list[int] = []
+            for j in range(len(nose_x) - 1, -1, -1):
+                pt = gmsh.model.geo.addPoint(
+                    float(nose_x[j]), float(-nose_r[j]), 0,
+                )
+                nose_lower_pts.append(pt)
+            nose_lower_spline = gmsh.model.geo.addSpline(nose_lower_pts)
+
+            # Downstream closure: upper half (outflow upper to body base upper)
+            body_base_upper_pt = gmsh.model.geo.addPoint(
+                float(domain.x_base), float(domain.r_base), 0,
+            )
+            outflow_upper_pt = upper_pts[0]
+            down_upper_line = gmsh.model.geo.addLine(
+                outflow_upper_pt, body_base_upper_pt,
+            )
+
+            # Downstream closure: lower half (body base lower to outflow lower)
+            body_base_lower_pt = gmsh.model.geo.addPoint(
+                float(domain.x_base), float(-domain.r_base), 0,
+            )
+            outflow_lower_pt = lower_pts[-1]
+            down_lower_line = gmsh.model.geo.addLine(
+                body_base_lower_pt, outflow_lower_pt,
+            )
+
+            # Base connection: body base upper to body base lower
+            base_body_line = gmsh.model.geo.addLine(
+                body_base_upper_pt, body_base_lower_pt,
+            )
+
+            # Farfield outer loop (CCW: fluid on left):
+            # upper_spline -> nose_upper -> nose_base_conn -> nose_lower
+            # -> lower_spline -> down_lower -> base_body -> down_upper
+            body_nose_upper_pt = nose_upper_pts[-1]  # (0, R_nose)
+            body_nose_lower_pt = nose_lower_pts[0]   # (0, -R_nose)
+
+            # Connection between body nose upper and body nose lower
+            nose_base_conn = gmsh.model.geo.addLine(
+                body_nose_upper_pt, body_nose_lower_pt,
+            )
+
+            # Farfield loop: upper -> nose_upper -> nose_base_conn -> nose_lower -> lower -> down_lower -> base_body -> down_upper
+            farfield_loop = gmsh.model.geo.addCurveLoop([
+                upper_spline,           # outflow upper -> inflow
+                nose_upper_spline,      # inflow -> body nose upper
+                nose_base_conn,         # body nose upper -> body nose lower
+                nose_lower_spline,      # body nose lower -> inflow
+                lower_spline,           # inflow -> outflow lower
+                down_lower_line,        # outflow lower -> body base lower
+                base_body_line,         # body base lower -> body base upper
+                down_upper_line,        # body base upper -> outflow upper
+            ])
+
+            # BL offset splines for upper and lower halves
+            upper_offset_pts = [bl_nodes[i][n_bl] for i in range(n_body)]
+            lower_offset_pts = [lower_bl_nodes[i][n_bl] for i in range(n_body)]
+
+            upper_offset_spline = gmsh.model.geo.addSpline(upper_offset_pts)
+            lower_offset_spline = gmsh.model.geo.addSpline(
+                lower_offset_pts[::-1],
+            )
+
+            # Connect BL offsets at nose and base
+            nose_conn = gmsh.model.geo.addLine(
+                lower_offset_pts[0], upper_offset_pts[0],
+            )
+            base_conn = gmsh.model.geo.addLine(
+                upper_offset_pts[-1], lower_offset_pts[-1],
+            )
+
+            # Inner BL loop (CW hole in the outer surface)
+            bl_loop = gmsh.model.geo.addCurveLoop([
+                upper_offset_spline,
+                base_conn,
+                lower_offset_spline,
+                nose_conn,
+            ])
+
+            # Outer surface: farfield loop with BL hole
+            outer_surface = gmsh.model.geo.addPlaneSurface(
+                [farfield_loop, bl_loop],
+            )
+
+            # --- Physical groups for full 2D C-grid ---
+            # Body curves: upper + base + lower
+            upper_body_curves: list[int] = []
+            for i in range(n_body - 1):
+                upper_body_curves.append(
+                    gmsh.model.geo.addLine(bl_nodes[i][0], bl_nodes[i + 1][0])
+                )
+            base_body_curve = gmsh.model.geo.addLine(
+                bl_nodes[n_body - 1][0], lower_bl_nodes[n_body - 1][0],
+            )
+            lower_body_curves: list[int] = []
+            for i in range(n_body - 1):
+                lower_body_curves.append(
+                    gmsh.model.geo.addLine(
+                        lower_bl_nodes[n_body - 1 - i][0],
+                        lower_bl_nodes[n_body - 2 - i][0],
+                    )
+                )
+            gmsh.model.geo.addPhysicalGroup(
+                1,
+                upper_body_curves + [base_body_curve] + lower_body_curves,
+                name="body",
+            )
+
+            # Farfield: upper boundary + nose closures + lower boundary
+            gmsh.model.geo.addPhysicalGroup(
+                1,
+                [upper_spline, nose_upper_spline, nose_lower_spline,
+                 lower_spline],
+                name="farfield",
+            )
+
+            # Fluid: BL surfaces + outer surface
+            gmsh.model.geo.addPhysicalGroup(
+                2, bl_surfaces + [outer_surface], name="fluid",
+            )
+            # NO sym marker for full 2d
+
+            offset_curves = [upper_offset_spline, lower_offset_spline]
+
+        else:
+            # ---- Axisymmetric C-grid: upper half only ----
+            # Follows the SAME annular surface pattern as the O-grid:
+            # - Inner boundary: BL offset spline (nose to base)
+            # - Outer boundary: C-shaped farfield (upper arc + connector lines)
+            # - Single annular surface between them
+            #
+            # Upper boundary: elliptical arc from outflow (right) to inflow (left)
+            n_upper = 41
+            upper_x, upper_r = _generate_cgrid_upper_boundary_points(
+                domain.upper_center_x,
+                domain.upper_center_r,
+                domain.upper_semi_major,
+                domain.upper_semi_minor,
+                n=n_upper,
+            )
+
+            upper_pts: list[int] = []
+            for j in range(n_upper):
+                pt = gmsh.model.geo.addPoint(
+                    float(upper_x[j]), float(upper_r[j]), 0,
+                )
+                upper_pts.append(pt)
+            upper_spline = gmsh.model.geo.addSpline(upper_pts)
+
+            # BL offset spline (top of BL, inner boundary of outer surface)
+            outer_inner_pts = [bl_nodes[i][n_bl] for i in range(n_body)]
+            offset_spline = gmsh.model.geo.addSpline(outer_inner_pts)
+
+            # Connector lines: connect farfield boundary to BL offset
+            # nose_conn: from inflow (x_inflow, 0) to BL offset start
+            inflow_pt = upper_pts[-1]  # last point of upper spline (theta=pi)
+            nose_conn = gmsh.model.geo.addLine(inflow_pt, outer_inner_pts[0])
+
+            # downstream_conn: from BL offset end to outflow (x_outflow, 0)
+            outflow_pt = upper_pts[0]  # first point of upper spline (theta=0)
+            downstream_conn = gmsh.model.geo.addLine(
+                outer_inner_pts[-1], outflow_pt,
+            )
+
+            # Outer surface loop (CCW: fluid on left)
+            # Pattern: offset_spline, downstream_conn, upper_spline, nose_conn
+            # This matches the O-grid pattern exactly.
+            outer_loop = gmsh.model.geo.addCurveLoop([
+                offset_spline,
+                downstream_conn,
+                upper_spline,
+                nose_conn,
+            ])
+            outer_surface = gmsh.model.geo.addPlaneSurface([outer_loop])
+
+            # --- Physical groups (SU2 markers) for axisymmetric ---
+            # Body curves: all body contour line segments
+            body_curves: list[int] = []
+            for i in range(n_body - 1):
+                body_curves.append(
+                    gmsh.model.geo.addLine(bl_nodes[i][0], bl_nodes[i + 1][0])
+                )
+            gmsh.model.geo.addPhysicalGroup(1, body_curves, name="body")
+
+            # Farfield: the C-grid upper boundary arc
+            gmsh.model.geo.addPhysicalGroup(
+                1, [upper_spline], name="farfield",
+            )
+
+            # Symmetry: lines on the axis r=0
+            # Upstream: from inflow to body nose on axis
+            sym_up_line = gmsh.model.geo.addLine(
+                inflow_pt, bl_nodes[0][0],
+            )
+            # Downstream: from body base on axis to outflow
+            body_base_axis_pt = gmsh.model.geo.addPoint(
+                float(domain.x_base), 0.0, 0,
+            )
+            sym_down_line = gmsh.model.geo.addLine(
+                body_base_axis_pt, outflow_pt,
+            )
+            gmsh.model.geo.addPhysicalGroup(
+                1, [sym_up_line, sym_down_line], name="sym",
+            )
+
+            # Fluid: BL surfaces + outer surface
+            gmsh.model.geo.addPhysicalGroup(
+                2, bl_surfaces + [outer_surface], name="fluid",
+            )
+
+            offset_curves = [offset_spline]
+
+        # --- Synchronize geometry ---
+        gmsh.model.geo.synchronize()
+
+        # ============================================================
+        #  SIZE FIELDS (identical to O-grid)
+        # ============================================================
+        tier_mult = _TIER_SIZE_MULTIPLIERS[mesh_config.mesh_tier]
+        body_length = config.computed_body_length
+
+        gmsh.option.setNumber(
+            "Mesh.CharacteristicLengthMin", 0.1 * R_nose * tier_mult,
+        )
+        gmsh.option.setNumber(
+            "Mesh.CharacteristicLengthMax", 2.0 * body_length * tier_mult,
+        )
+
+        # Background mesh
+        bg_tag = 100
+        gmsh.model.mesh.field.add("Constant", bg_tag)
+        bg_vin = 0.2 * body_length * tier_mult
+        gmsh.model.mesh.field.setNumber(bg_tag, "VIn", bg_vin)
+        gmsh.model.mesh.field.setNumber(bg_tag, "VOut", bg_vin)
+
+        # Shock refinement
+        shock_tag = 300
+        if mesh_config.shock_refinement:
+            _add_shock_refinement(
+                config, mach, mesh_config, shock_tag, tier_mult,
+            )
+
+        # Junction refinement
+        junc_tag = 400
+        _add_junction_refinement(config, mesh_config, junc_tag, tier_mult)
+
+        # Wake refinement
+        wake_tag = 600
+        _add_wake_refinement(config, mesh_config, wake_tag, tier_mult)
+
+        # Distance-based size field for smooth BL-to-farfield transition
+        distance_tag = 700
+        gmsh.model.mesh.field.add("Distance", distance_tag)
+        gmsh.model.mesh.field.setNumbers(distance_tag, "CurvesList", offset_curves)
+
+        bl_edge_spacing = 0.5 * body_length / max(n_body - 1, 1)
+        min_size = max(bl_edge_spacing, 0.01 * tier_mult)
+        max_size = 0.3 * R_nose * tier_mult
+
+        # Use upper_semi_minor as the characteristic farfield distance
+        ramp_dist = domain.upper_semi_minor if hasattr(domain, "upper_semi_minor") else domain.r_inflow_upper
+        ramp_coeff = (max_size - min_size) / ramp_dist
+
+        math_tag = 701
+        gmsh.model.mesh.field.add("MathEval", math_tag)
+        gmsh.model.mesh.field.setString(
+            math_tag,
+            "F",
+            f"Max({min_size}, Min({max_size}, "
+            f"{min_size} + F{distance_tag} * {ramp_coeff}))",
+        )
+
+        # Combine fields with Min
+        min_tag = 999
+        field_ids: list[int] = [bg_tag]
+        if mesh_config.shock_refinement:
+            field_ids.append(shock_tag)
+        field_ids.append(junc_tag)
+        field_ids.append(wake_tag)
+        field_ids.append(math_tag)
+
+        gmsh.model.mesh.field.add("Min", min_tag)
+        gmsh.model.mesh.field.setNumbers(min_tag, "FieldsList", field_ids)
+        gmsh.model.mesh.field.setAsBackgroundMesh(min_tag)
+
+        # ============================================================
+        #  MESH GENERATION
+        # ============================================================
+        gmsh.option.setNumber("Mesh.Algorithm", 8)  # Frontal-Delaunay
+        gmsh.option.setNumber("Mesh.Smoothing", 50)
+        gmsh.model.mesh.generate(2)
+        gmsh.model.mesh.optimize("Netgen")
+
+        # --- Export ---
+        gmsh.write(str(output_path))
+
+    except Exception as exc:
+        raise RuntimeError(f"Mesh generation failed: {exc}") from exc
+    finally:
+        try:
+            gmsh.finalize()
+        except OSError:
+            pass
+
+    return output_path
+
+
 def generate_body_mesh(
     config: BluntBodyConfig,
     mesh_config: MeshConfig,
@@ -325,6 +974,12 @@ def generate_body_mesh(
         mesh_config = MeshConfig.for_tier(
             mesh_config.mesh_tier,
             domain_type="full2d",
+        )
+
+    # Dispatch to C-grid mesh if requested
+    if mesh_config.domain_type == "cgrid":
+        return generate_cgrid_mesh(
+            config, mesh_config, mach, output_path, aoa=aoa,
         )
 
     try:

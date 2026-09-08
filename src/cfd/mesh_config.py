@@ -44,6 +44,47 @@ class OGridDomain:
 
 
 @dataclass(frozen=True)
+class CGridDomain:
+    """Parameters for a C-grid farfield boundary wrapping a blunt body.
+
+    The C-grid topology extends from an inflow boundary upstream of the
+    nose, wraps around the body, and terminates at an outflow boundary
+    downstream of the base.  The upper boundary is an elliptical arc
+    connecting inflow and outflow, and a nose-cap closure seals the
+    region upstream of the body nose.
+
+    Attributes:
+        x_inflow: Axial coordinate of the inflow boundary on the symmetry axis (m).
+        r_inflow_upper: Radial coordinate where inflow meets the upper boundary (m).
+        x_outflow: Axial coordinate of the outflow boundary on the symmetry axis (m).
+        r_outflow_upper: Radial coordinate where outflow meets the upper boundary (m).
+        upper_center_x: Center x of the upper boundary elliptical arc (m).
+        upper_center_r: Center r of the upper boundary elliptical arc (m).
+        upper_semi_major: Semi-major axis of the upper boundary arc (m).
+        upper_semi_minor: Semi-minor axis of the upper boundary arc (m).
+        nose_cap_x: Center x of the nose-cap closure (m).
+        nose_cap_r: Center r of the nose-cap closure (m).
+        x_nose: Axial coordinate of the body nose tip (m).
+        x_base: Axial coordinate of the body base (m).
+        r_base: Radial coordinate of the body base (m).
+    """
+
+    x_inflow: float
+    r_inflow_upper: float
+    x_outflow: float
+    r_outflow_upper: float
+    upper_center_x: float
+    upper_center_r: float
+    upper_semi_major: float
+    upper_semi_minor: float
+    nose_cap_x: float
+    nose_cap_r: float
+    x_nose: float
+    x_base: float
+    r_base: float
+
+
+@dataclass(frozen=True)
 class MeshConfig:
     """Configuration for Gmsh boundary-layer mesh on a spherically-blunted cone.
 
@@ -58,7 +99,7 @@ class MeshConfig:
         shock_standoff_factor: Refinement zone = factor * delta (shock standoff).
         farfield_distance: Farfield boundary distance in x * R_nose units.
         mesh_tier: Refinement tier (draft, standard, high).
-        domain_type: Mesh domain type ('axisymmetric' or 'full2d').
+        domain_type: Mesh domain type ('axisymmetric', 'full2d', 'cgrid', or 'ogrid').
         upstream_factor: Upstream distance as multiple of R_nose.
         downstream_factor: Downstream distance as multiple of body diameter.
         lateral_factor: Lateral distance as multiple of R_nose.
@@ -93,9 +134,9 @@ class MeshConfig:
             raise ValueError(
                 f"mesh_tier must be 'draft', 'standard', or 'high', got '{self.mesh_tier}'"
             )
-        if self.domain_type not in ("axisymmetric", "full2d"):
+        if self.domain_type not in ("axisymmetric", "full2d", "cgrid", "ogrid"):
             raise ValueError(
-                f"domain_type must be 'axisymmetric' or 'full2d', got '{self.domain_type}'"
+                f"domain_type must be 'axisymmetric', 'full2d', 'cgrid', or 'ogrid', got '{self.domain_type}'"
             )
         if self.n_axial_nose < 10:
             raise ValueError(
@@ -149,7 +190,7 @@ class MeshConfig:
         For full2d domains the farfield is slightly larger to accommodate
         the mirrored body geometry without clipping the shock layer.
         """
-        if self.domain_type == "full2d":
+        if self.domain_type in ("full2d", "cgrid"):
             return self.farfield_distance * 1.2
         return self.farfield_distance
 
@@ -175,10 +216,10 @@ class MeshConfig:
             )
         mult = _TIER_MULTIPLIERS[tier]
 
-        # Full2D domain wraps the entire body (no symmetry axis), so
-        # lateral waste is reduced from 8x to 4x R_nose.
+        # Full2D and CGrid domains wrap the entire body (no symmetry axis),
+        # so lateral waste is reduced from 8x to 4x R_nose.
         domain_type_val = str(overrides.pop("domain_type", "axisymmetric"))
-        default_lateral = 4.0 if domain_type_val == "full2d" else 8.0
+        default_lateral = 4.0 if domain_type_val in ("full2d", "cgrid") else 8.0
 
         config = cls(
             n_bl=max(10, int(50 * mult)),

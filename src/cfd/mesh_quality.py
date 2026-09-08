@@ -187,6 +187,10 @@ def check_mesh_quality(mesh_path: Path) -> dict:
     Computes cell count, minimum/mean quality, percentage of bad cells
     (quality < 0.3), and verifies boundary marker presence.
 
+    Compatible with both O-grid and C-grid mesh topologies.  C-grid
+    meshes use the same physical group markers (body, farfield, sym) as
+    O-grid meshes, so no special-casing is needed.
+
     Args:
         mesh_path: Path to the .su2 mesh file.
 
@@ -240,6 +244,10 @@ def validate_su2_mesh(mesh_path: Path) -> bool:
         - NDIME=2 is present
         - Required markers (body, farfield, sym) are present
         - No negative-volume cells (all element areas are non-negative)
+
+    Compatible with both O-grid and C-grid mesh topologies.  C-grid
+    meshes use the same physical group markers (body, farfield) as
+    O-grid meshes, so no special-casing is needed.
 
     Args:
         mesh_path: Path to the .su2 mesh file.

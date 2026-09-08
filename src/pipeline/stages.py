@@ -178,6 +178,10 @@ def run_mesh_stage(config: CaseConfig) -> int:
     body_config = config.preset_fn()
     mesh_config = MeshConfig.for_tier(config.mesh_tier)
 
+    # To use C-grid topology, create MeshConfig with domain_type="cgrid":
+    #   mesh_config = MeshConfig.for_tier(config.mesh_tier, domain_type="cgrid")
+    # This will route generate_body_mesh() to generate_cgrid_mesh().
+
     mesh_dir = Path(config.output_dir) / "mesh"
     mesh_dir.mkdir(parents=True, exist_ok=True)
     mesh_path = mesh_dir / f"{config.name}.su2"
