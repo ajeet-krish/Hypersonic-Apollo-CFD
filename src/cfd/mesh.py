@@ -37,9 +37,6 @@ from validation.billig import billig_blunted_cone
 
 from .mesh_config import MeshConfig, CGridDomain, OGridDomain
 
-if TYPE_CHECKING:
-    pass
-
 # Mesh size multipliers per tier (inverse of cell-count multipliers).
 # Draft uses 2x larger cells (fewer total), high uses 0.5x (more total).
 _TIER_SIZE_MULTIPLIERS: dict[str, float] = {
@@ -200,10 +197,10 @@ def _add_shock_refinement(
     gmsh.model.mesh.field.setNumber(ball_tag, "XCenter", delta)
     gmsh.model.mesh.field.setNumber(ball_tag, "YCenter", 0.0)
     gmsh.model.mesh.field.setNumber(ball_tag, "ZCenter", 0.0)
-    gmsh.model.mesh.field.setNumber(ball_tag, "VIn", 0.1 * R_nose * tier_mult)
-    gmsh.model.mesh.field.setNumber(ball_tag, "VOut", 0.3 * R_nose * tier_mult)
+    gmsh.model.mesh.field.setNumber(ball_tag, "VIn", 0.05 * R_nose * tier_mult)
+    gmsh.model.mesh.field.setNumber(ball_tag, "VOut", 0.25 * R_nose * tier_mult)
     gmsh.model.mesh.field.setNumber(
-        ball_tag, "Radius", mesh_config.shock_standoff_factor * delta,
+        ball_tag, "Radius", mesh_config.shock_standoff_factor * delta * 1.2,
     )
 
 
@@ -229,7 +226,7 @@ def _add_junction_refinement(
     gmsh.model.mesh.field.setNumber(field_tag, "XCenter", config.junction_x)
     gmsh.model.mesh.field.setNumber(field_tag, "YCenter", config.junction_r)
     gmsh.model.mesh.field.setNumber(field_tag, "ZCenter", 0.0)
-    gmsh.model.mesh.field.setNumber(field_tag, "VIn", 0.1 * R_nose * tier_mult)
+    gmsh.model.mesh.field.setNumber(field_tag, "VIn", 0.05 * R_nose * tier_mult)
     gmsh.model.mesh.field.setNumber(field_tag, "VOut", 0.3 * R_nose * tier_mult)
     gmsh.model.mesh.field.setNumber(field_tag, "Radius", 1.5 * R_nose)
 
@@ -240,29 +237,51 @@ def _add_wake_refinement(
     field_tag: int,
     tier_mult: float = 1.0,
 ) -> None:
-    """Add refinement in the wake region downstream of the body base.
+    """Add graduated wake refinement downstream of the body base.
 
-    Creates a Box field covering the region immediately behind the body
-    base to capture wake structures (recirculation zone, shear layers).
+    Creates three overlapping Box fields with progressively coarser cells:
+      - Near wake (0-5 R_nose): finest resolution for recirculation zone
+      - Mid wake (5-15 R_nose): medium resolution for shear layers
+      - Far wake (15-30 R_nose): coarser resolution for wake decay
 
     Args:
         config: Blunt body geometry parameters.
         mesh_config: Mesh configuration.
-        field_tag: Field tag for the wake refinement box field.
+        field_tag: Starting field tag (uses field_tag, field_tag+1, field_tag+2).
         tier_mult: Mesh size multiplier for the tier (larger = coarser).
     """
     import gmsh
 
     body_length = config.computed_body_length
     R_nose = config.R_nose
+    r_max = config.max_radius
 
+    # Near wake: finest cells for recirculation zone
     gmsh.model.mesh.field.add("Box", field_tag)
     gmsh.model.mesh.field.setNumber(field_tag, "XMin", body_length)
-    gmsh.model.mesh.field.setNumber(field_tag, "XMax", body_length + 10.0 * R_nose)
-    gmsh.model.mesh.field.setNumber(field_tag, "YMin", -config.max_radius * 2.0)
-    gmsh.model.mesh.field.setNumber(field_tag, "YMax", config.max_radius * 2.0)
-    gmsh.model.mesh.field.setNumber(field_tag, "VIn", 0.1 * R_nose * tier_mult)
-    gmsh.model.mesh.field.setNumber(field_tag, "VOut", 0.3 * R_nose * tier_mult)
+    gmsh.model.mesh.field.setNumber(field_tag, "XMax", body_length + 5.0 * R_nose)
+    gmsh.model.mesh.field.setNumber(field_tag, "YMin", -r_max * 1.5)
+    gmsh.model.mesh.field.setNumber(field_tag, "YMax", r_max * 1.5)
+    gmsh.model.mesh.field.setNumber(field_tag, "VIn", 0.08 * R_nose * tier_mult)
+    gmsh.model.mesh.field.setNumber(field_tag, "VOut", 0.2 * R_nose * tier_mult)
+
+    # Mid wake: shear layer region
+    gmsh.model.mesh.field.add("Box", field_tag + 1)
+    gmsh.model.mesh.field.setNumber(field_tag + 1, "XMin", body_length)
+    gmsh.model.mesh.field.setNumber(field_tag + 1, "XMax", body_length + 15.0 * R_nose)
+    gmsh.model.mesh.field.setNumber(field_tag + 1, "YMin", -r_max * 3.0)
+    gmsh.model.mesh.field.setNumber(field_tag + 1, "YMax", r_max * 3.0)
+    gmsh.model.mesh.field.setNumber(field_tag + 1, "VIn", 0.15 * R_nose * tier_mult)
+    gmsh.model.mesh.field.setNumber(field_tag + 1, "VOut", 0.4 * R_nose * tier_mult)
+
+    # Far wake: gradual coarsening toward outflow
+    gmsh.model.mesh.field.add("Box", field_tag + 2)
+    gmsh.model.mesh.field.setNumber(field_tag + 2, "XMin", body_length)
+    gmsh.model.mesh.field.setNumber(field_tag + 2, "XMax", body_length + 30.0 * R_nose)
+    gmsh.model.mesh.field.setNumber(field_tag + 2, "YMin", -r_max * 6.0)
+    gmsh.model.mesh.field.setNumber(field_tag + 2, "YMax", r_max * 6.0)
+    gmsh.model.mesh.field.setNumber(field_tag + 2, "VIn", 0.3 * R_nose * tier_mult)
+    gmsh.model.mesh.field.setNumber(field_tag + 2, "VOut", 0.6 * R_nose * tier_mult)
 
 
 def _build_cgrid_domain(
@@ -533,10 +552,6 @@ def generate_cgrid_mesh(
         is_full2d = mesh_config.domain_type == "full2d"
 
         if is_full2d:
-            x_lower = x_body[::-1]
-            r_lower = -r_body[::-1]
-            n_lower = len(x_lower)
-
             lower_bl_nodes: list[list[int]] = []
             for i in range(n_body):
                 layer_pts: list[int] = []
@@ -846,7 +861,7 @@ def generate_cgrid_mesh(
         body_length = config.computed_body_length
 
         gmsh.option.setNumber(
-            "Mesh.CharacteristicLengthMin", 0.1 * R_nose * tier_mult,
+            "Mesh.CharacteristicLengthMin", 0.05 * R_nose * tier_mult,
         )
         gmsh.option.setNumber(
             "Mesh.CharacteristicLengthMax", 2.0 * body_length * tier_mult,
@@ -855,7 +870,7 @@ def generate_cgrid_mesh(
         # Background mesh
         bg_tag = 100
         gmsh.model.mesh.field.add("Constant", bg_tag)
-        bg_vin = 0.2 * body_length * tier_mult
+        bg_vin = 0.15 * body_length * tier_mult
         gmsh.model.mesh.field.setNumber(bg_tag, "VIn", bg_vin)
         gmsh.model.mesh.field.setNumber(bg_tag, "VOut", bg_vin)
 
@@ -904,6 +919,8 @@ def generate_cgrid_mesh(
             field_ids.append(shock_tag)
         field_ids.append(junc_tag)
         field_ids.append(wake_tag)
+        field_ids.append(wake_tag + 1)
+        field_ids.append(wake_tag + 2)
         field_ids.append(math_tag)
 
         gmsh.model.mesh.field.add("Min", min_tag)
@@ -918,6 +935,7 @@ def generate_cgrid_mesh(
         gmsh.model.mesh.generate(2)
         # Multiple optimization passes for better quality
         gmsh.model.mesh.optimize("Netgen")
+        gmsh.model.mesh.optimize("Laplace2D")
         gmsh.model.mesh.optimize("Laplace2D")
 
         # --- Export ---
@@ -1105,11 +1123,6 @@ def generate_body_mesh(
         is_full2d = mesh_config.domain_type == "full2d"
 
         if is_full2d:
-            # Mirror body contour: negate r, reverse order for proper winding
-            x_lower = x_body[::-1]
-            r_lower = -r_body[::-1]
-            n_lower = len(x_lower)
-
             # Create lower BL nodes by mirroring upper BL (negate r)
             lower_bl_nodes: list[list[int]] = []
             for i in range(n_body):
@@ -1342,7 +1355,7 @@ def generate_body_mesh(
         body_length = config.computed_body_length
 
         gmsh.option.setNumber(
-            "Mesh.CharacteristicLengthMin", 0.1 * R_nose * tier_mult,
+            "Mesh.CharacteristicLengthMin", 0.05 * R_nose * tier_mult,
         )
         gmsh.option.setNumber(
             "Mesh.CharacteristicLengthMax", 2.0 * body_length * tier_mult,
@@ -1351,7 +1364,7 @@ def generate_body_mesh(
         # Background mesh (base cell size, scaled by tier)
         bg_tag = 100
         gmsh.model.mesh.field.add("Constant", bg_tag)
-        bg_vin = 0.2 * body_length * tier_mult
+        bg_vin = 0.15 * body_length * tier_mult
         gmsh.model.mesh.field.setNumber(bg_tag, "VIn", bg_vin)
         gmsh.model.mesh.field.setNumber(bg_tag, "VOut", bg_vin)
 
@@ -1388,9 +1401,10 @@ def generate_body_mesh(
         # Compute ramp parameters
         bl_edge_spacing = 0.5 * body_length / max(n_body - 1, 1)
         min_size = max(bl_edge_spacing, 0.01 * tier_mult)
-        max_size = 0.3 * R_nose * tier_mult
-        # Ramp coefficient: size = min_size + ramp_coeff * distance
-        ramp_coeff = (max_size - min_size) / domain.semi_minor
+        max_size = 0.25 * R_nose * tier_mult  # Slightly smaller max for better farfield quality
+        # Cap ramp distance for tighter control (prevents extreme size ratios)
+        ramp_dist = min(domain.semi_minor, 15.0 * R_nose)
+        ramp_coeff = (max_size - min_size) / ramp_dist
 
         math_tag = 701
         gmsh.model.mesh.field.add("MathEval", math_tag)
@@ -1408,6 +1422,8 @@ def generate_body_mesh(
             field_ids.append(shock_tag)
         field_ids.append(junc_tag)
         field_ids.append(wake_tag)
+        field_ids.append(wake_tag + 1)
+        field_ids.append(wake_tag + 2)
         field_ids.append(math_tag)
 
         gmsh.model.mesh.field.add("Min", min_tag)
@@ -1418,12 +1434,13 @@ def generate_body_mesh(
         #  MESH GENERATION
         # ============================================================
         gmsh.option.setNumber("Mesh.Algorithm", 8)  # Frontal-Delaunay
-        gmsh.option.setNumber("Mesh.Smoothing", 50)
+        gmsh.option.setNumber("Mesh.Smoothing", 100)
         gmsh.model.mesh.generate(2)
 
         # Post-generation optimization to fix inverted/sliver elements
         # caused by extreme BL-to-farfield size ratios.
         gmsh.model.mesh.optimize("Netgen")
+        gmsh.model.mesh.optimize("Laplace2D")
 
         # --- Export ---
         gmsh.write(str(output_path))
@@ -1553,9 +1570,10 @@ def generate_mesh_from_dxf(
         gmsh.option.setNumber(
             "Mesh.CharacteristicLengthMax", 0.5 * body_length * tier_mult,
         )
-        gmsh.option.setNumber("Mesh.Smoothing", 50)
+        gmsh.option.setNumber("Mesh.Smoothing", 100)
         gmsh.model.mesh.generate(2)
         gmsh.model.mesh.optimize("Netgen")
+        gmsh.model.mesh.optimize("Laplace2D")
 
         # --- Export ---
         gmsh.write(str(output_path))
@@ -2018,7 +2036,7 @@ def generate_rectangular_mesh(
         tier_mult = _TIER_SIZE_MULTIPLIERS[mesh_config.mesh_tier]
 
         gmsh.option.setNumber(
-            "Mesh.CharacteristicLengthMin", 0.1 * R_nose * tier_mult,
+            "Mesh.CharacteristicLengthMin", 0.05 * R_nose * tier_mult,
         )
         gmsh.option.setNumber(
             "Mesh.CharacteristicLengthMax", 2.0 * body_length * tier_mult,
@@ -2027,7 +2045,7 @@ def generate_rectangular_mesh(
         # Background mesh
         bg_tag = 100
         gmsh.model.mesh.field.add("Constant", bg_tag)
-        bg_vin = 0.2 * body_length * tier_mult
+        bg_vin = 0.15 * body_length * tier_mult
         gmsh.model.mesh.field.setNumber(bg_tag, "VIn", bg_vin)
         gmsh.model.mesh.field.setNumber(bg_tag, "VOut", bg_vin)
 
@@ -2074,6 +2092,8 @@ def generate_rectangular_mesh(
             field_ids.append(shock_tag)
         field_ids.append(junc_tag)
         field_ids.append(wake_tag)
+        field_ids.append(wake_tag + 1)
+        field_ids.append(wake_tag + 2)
         field_ids.append(math_tag)
 
         gmsh.model.mesh.field.add("Min", min_tag)
@@ -2088,6 +2108,7 @@ def generate_rectangular_mesh(
         gmsh.model.mesh.generate(2)
         # Multiple optimization passes for better quality
         gmsh.model.mesh.optimize("Netgen")
+        gmsh.model.mesh.optimize("Laplace2D")
         gmsh.model.mesh.optimize("Laplace2D")
 
         # --- Export ---

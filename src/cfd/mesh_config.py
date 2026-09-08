@@ -99,7 +99,7 @@ class MeshConfig:
         shock_standoff_factor: Refinement zone = factor * delta (shock standoff).
         farfield_distance: Farfield boundary distance in x * R_nose units.
         mesh_tier: Refinement tier (draft, standard, high).
-        domain_type: Mesh domain type ('axisymmetric', 'full2d', 'cgrid', or 'ogrid').
+        domain_type: Mesh domain type ('axisymmetric', 'full2d', 'cgrid', 'ogrid', or 'rectangular').
         upstream_factor: Upstream distance as multiple of R_nose.
         downstream_factor: Downstream distance as multiple of body diameter.
         lateral_factor: Lateral distance as multiple of R_nose.
@@ -117,7 +117,7 @@ class MeshConfig:
     mesh_tier: str = "standard"
     domain_type: str = "axisymmetric"
     upstream_factor: float = 8.0
-    downstream_factor: float = 12.0
+    downstream_factor: float = 20.0
     lateral_factor: float = 8.0
 
     def __post_init__(self) -> None:
@@ -234,7 +234,7 @@ class MeshConfig:
             mesh_tier=tier,
             domain_type=domain_type_val,
             upstream_factor=float(overrides.pop("upstream_factor", 8.0)),
-            downstream_factor=float(overrides.pop("downstream_factor", 12.0)),
+            downstream_factor=float(overrides.pop("downstream_factor", 20.0)),
             lateral_factor=float(overrides.pop("lateral_factor", default_lateral)),
         )
 
