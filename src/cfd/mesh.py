@@ -275,6 +275,10 @@ def _build_cgrid_domain(
     that is an elliptical arc, a nose-cap closure upstream, and
     extends to an outflow boundary downstream.
 
+    Domain extents are derived from the same formulas used by the
+    O-grid to ensure consistent proportions and avoid excessive
+    connector line lengths.
+
     Args:
         config: Blunt body geometry parameters.
         mesh_config: Mesh configuration with domain factor multipliers.
@@ -284,11 +288,20 @@ def _build_cgrid_domain(
     """
     R_nose = config.R_nose
     body_length = config.computed_body_length
-    max_radius = config.max_radius
+    body_diameter = 2.0 * config.max_radius
 
-    x_inflow = -mesh_config.upstream_factor * R_nose
-    x_outflow = body_length + mesh_config.downstream_factor * (2.0 * max_radius)
-    r_upper = mesh_config.lateral_factor * R_nose
+    # Derive extents from O-grid formulas for consistent proportions
+    upstream = mesh_config.upstream_factor * R_nose
+    downstream = mesh_config.downstream_factor * body_diameter
+    lateral = mesh_config.lateral_factor * R_nose
+
+    # C-grid boundaries: inflow at left, outflow at right
+    # Use O-grid's x_min and x_max for consistent domain size
+    semi_major = (upstream + body_length + downstream) / 2.0
+    center_x = 0.0 + upstream + body_length / 2.0
+    x_inflow = center_x - semi_major  # Same as O-grid x_min
+    x_outflow = center_x + semi_major  # Same as O-grid x_max
+    r_upper = lateral
 
     # Upper boundary: elliptical arc centered at midpoint of inflow-outflow
     upper_center_x = (x_inflow + x_outflow) / 2.0
@@ -296,8 +309,7 @@ def _build_cgrid_domain(
     upper_semi_major = (x_outflow - x_inflow) / 2.0
     upper_semi_minor = r_upper
 
-    # Nose cap: straight line from (x_inflow, 0) to body nose (0, R_nose)
-    # Use midpoint of the closure line as the nose cap center
+    # Nose cap: midpoint of the closure line
     nose_cap_x = (x_inflow + 0.0) / 2.0
     nose_cap_r = (0.0 + R_nose) / 2.0
 
@@ -354,11 +366,10 @@ def _generate_cgrid_nose_closure_points(
     r_nose: float,
     n: int = 20,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Generate points along a straight line for C-grid nose closure.
+    """Generate points along an elliptical arc for C-grid nose closure.
 
-    Produces n points evenly spaced along a straight line from
-    (x_inflow, 0) to (x_nose, r_nose). These points form the nose
-    closure of the C-grid topology.
+    Creates a smooth elliptical arc from (x_inflow, 0) to (x_nose, r_nose),
+    replacing the straight-line closure to improve mesh quality at the nose.
 
     Args:
         x_inflow: Axial coordinate of the inflow boundary (m).
@@ -367,11 +378,17 @@ def _generate_cgrid_nose_closure_points(
         n: Number of points (default 20).
 
     Returns:
-        (x, r) arrays of the nose closure line points, ordered from
+        (x, r) arrays of the nose closure arc points, ordered from
         (x_inflow, 0) to (x_nose, r_nose).
     """
-    x = np.linspace(x_inflow, x_nose, n)
-    r = np.linspace(0.0, r_nose, n)
+    # Elliptical arc from (x_inflow, 0) to (x_nose, r_nose)
+    # Parameterize by theta from 0 to pi/2
+    theta = np.linspace(0.0, np.pi / 2.0, n)
+    # Semi-axes: a along x, b along r
+    a = x_nose - x_inflow  # positive (x_nose > x_inflow)
+    b = r_nose
+    x = x_inflow + a * np.cos(theta)
+    r = b * np.sin(theta)
     return x, r
 
 
@@ -866,17 +883,18 @@ def generate_cgrid_mesh(
         min_size = max(bl_edge_spacing, 0.01 * tier_mult)
         max_size = 0.3 * R_nose * tier_mult
 
-        # Use upper_semi_minor as the characteristic farfield distance
-        ramp_dist = domain.upper_semi_minor if hasattr(domain, "upper_semi_minor") else domain.r_inflow_upper
+        # Use actual domain extent for ramp distance
+        ramp_dist = domain.upper_semi_minor
         ramp_coeff = (max_size - min_size) / ramp_dist
 
+        # Exponential ramp for smoother size transitions
         math_tag = 701
         gmsh.model.mesh.field.add("MathEval", math_tag)
         gmsh.model.mesh.field.setString(
             math_tag,
             "F",
-            f"Max({min_size}, Min({max_size}, "
-            f"{min_size} + F{distance_tag} * {ramp_coeff}))",
+            f"{min_size} * Exp(Min(F{distance_tag}, {ramp_dist}) "
+            f"* Log({max_size}/{min_size}) / {ramp_dist})",
         )
 
         # Combine fields with Min
@@ -895,10 +913,12 @@ def generate_cgrid_mesh(
         # ============================================================
         #  MESH GENERATION
         # ============================================================
-        gmsh.option.setNumber("Mesh.Algorithm", 8)  # Frontal-Delaunay
-        gmsh.option.setNumber("Mesh.Smoothing", 50)
+        gmsh.option.setNumber("Mesh.Algorithm", 5)  # Delaunay - better for complex size fields
+        gmsh.option.setNumber("Mesh.Smoothing", 100)
         gmsh.model.mesh.generate(2)
+        # Multiple optimization passes for better quality
         gmsh.model.mesh.optimize("Netgen")
+        gmsh.model.mesh.optimize("Laplace2D")
 
         # --- Export ---
         gmsh.write(str(output_path))
@@ -979,6 +999,12 @@ def generate_body_mesh(
     # Dispatch to C-grid mesh if requested
     if mesh_config.domain_type == "cgrid":
         return generate_cgrid_mesh(
+            config, mesh_config, mach, output_path, aoa=aoa,
+        )
+
+    # Dispatch to rectangular mesh if requested
+    if mesh_config.domain_type == "rectangular":
+        return generate_rectangular_mesh(
             config, mesh_config, mach, output_path, aoa=aoa,
         )
 
@@ -1545,3 +1571,534 @@ def generate_mesh_from_dxf(
     return output_path
 
 
+def _generate_rounded_corner_points(
+    cx: float,
+    cy: float,
+    x_start: float,
+    y_start: float,
+    x_end: float,
+    y_end: float,
+    n: int = 10,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Generate points along a quarter-circle arc for rounded rectangle corners.
+
+    Creates a smooth quarter-circle arc connecting two edges that meet at a
+    corner. The arc is centered at (cx, cy) with radius = distance from
+    center to start point.
+
+    Args:
+        cx: Center x-coordinate of the corner arc.
+        cy: Center y-coordinate of the corner arc.
+        x_start: x-coordinate of arc start (on first edge).
+        y_start: y-coordinate of arc start.
+        x_end: x-coordinate of arc end (on second edge).
+        y_end: y-coordinate of arc end.
+        n: Number of points on the arc (default 10).
+
+    Returns:
+        (x, r) arrays of arc points, ordered from start to end.
+    """
+    # Compute radius from center to start point
+    radius = np.sqrt((x_start - cx) ** 2 + (y_start - cy) ** 2)
+    # Compute start and end angles
+    theta_start = np.arctan2(y_start - cy, x_start - cx)
+    theta_end = np.arctan2(y_end - cy, x_end - cx)
+    # Generate arc points
+    theta = np.linspace(theta_start, theta_end, n)
+    x = cx + radius * np.cos(theta)
+    r = cy + radius * np.sin(theta)
+    return x, r
+
+
+def generate_rectangular_mesh(
+    config: BluntBodyConfig,
+    mesh_config: MeshConfig,
+    mach: float,
+    output_path: Path,
+    aoa: float = 0.0,
+) -> Path:
+    """Generate a 2D rectangular-domain Gmsh mesh for a spherically-blunted cone.
+
+    Creates the computational domain with:
+        - Body contour (sphere + cone) from geometry generation
+        - Rectangular farfield boundary (upstream, downstream, upper, lower)
+        - Symmetry axis along r=0 (axisymmetric) or full domain (full2d)
+        - Structured boundary-layer cells at the body wall
+        - Shock-region refinement from Billig correlation
+        - Sphere-cone junction refinement
+        - Wake refinement downstream of body base
+
+    The rectangular domain is sized to:
+        - Cover the bow shock width (upstream ~10 R_nose)
+        - Extend far downstream for wake development (~15 body diameters)
+        - Provide adequate lateral clearance (~8 body diameters)
+
+    When *aoa* != 0 the domain is forced to full2d regardless of the
+    ``mesh_config.domain_type`` setting.
+
+    Args:
+        config: Blunt body geometry configuration.
+        mesh_config: Mesh refinement configuration.
+        mach: Freestream Mach number (for shock refinement).
+        output_path: Output .su2 mesh file path.
+        aoa: Angle of attack in degrees (default 0.0).
+
+    Returns:
+        Path to the generated .su2 mesh file.
+
+    Raises:
+        RuntimeError: If mesh generation fails.
+    """
+    import gmsh
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # --- Angle of attack handling ---
+    if aoa != 0.0:
+        if mesh_config.domain_type == "axisymmetric":
+            print(
+                f"  WARNING: axisymmetric domain requested but aoa={aoa} deg; "
+                "forcing full2d"
+            )
+        mesh_config = MeshConfig.for_tier(
+            mesh_config.mesh_tier,
+            domain_type="full2d",
+        )
+
+    try:
+        gmsh.initialize()
+        gmsh.option.setNumber("General.Terminal", 0)
+        gmsh.model.add("blunt_body_rectangular")
+
+        # --- Body contour ---
+        x_body, r_body = generate_contour(config)
+        R_nose = config.R_nose
+        body_length = config.computed_body_length
+        body_diameter = 2.0 * config.max_radius
+        n_body = len(x_body)
+
+        # --- Rectangular domain sizing ---
+        # Upstream: 10 R_nose ahead of nose
+        # Downstream: 15 body diameters past base
+        # Lateral: 8 body diameters (full2d) or 4 body diameters (axisymmetric)
+        upstream = 10.0 * R_nose
+        downstream = 15.0 * body_diameter
+        lateral = 8.0 * body_diameter if mesh_config.domain_type == "full2d" else 4.0 * body_diameter
+
+        x_min = -upstream
+        x_max = body_length + downstream
+        r_max = lateral
+
+        # --- Boundary layer geometry (identical to O-grid) ---
+        first_h = mesh_config.resolve_first_cell_height(R_nose)
+        n_bl = mesh_config.n_bl
+        ratio = mesh_config.bl_growth_ratio
+
+        # Compute outward normals at each body point
+        normals = np.empty((n_body, 2))
+        for i in range(n_body):
+            if i == 0:
+                dx = x_body[1] - x_body[0]
+                dr = r_body[1] - r_body[0]
+            elif i == n_body - 1:
+                dx = x_body[-1] - x_body[-2]
+                dr = r_body[-1] - r_body[-2]
+            else:
+                dx = x_body[i + 1] - x_body[i - 1]
+                dr = r_body[i + 1] - r_body[i - 1]
+            mag = np.hypot(dx, dr)
+            if mag < 1e-15:
+                normals[i] = [0.0, 1.0]
+            else:
+                n = np.array([-dr / mag, dx / mag])
+                if n[1] < 0:
+                    n = -n
+                normals[i] = n
+
+        # --- Create BL layer points ---
+        bl_nodes: list[list[int]] = []
+        bl_node_coords: list[list[tuple[float, float]]] = []
+        cumulative_h = np.zeros(n_bl + 1)
+        for k in range(1, n_bl + 1):
+            cumulative_h[k] = cumulative_h[k - 1] + first_h * ratio ** (k - 1)
+
+        for i in range(n_body):
+            layer_pts: list[int] = []
+            layer_coords: list[tuple[float, float]] = []
+            for k in range(n_bl + 1):
+                x = x_body[i] + normals[i, 0] * cumulative_h[k]
+                r = r_body[i] + normals[i, 1] * cumulative_h[k]
+                pt = gmsh.model.geo.addPoint(float(x), float(r), 0)
+                layer_pts.append(pt)
+                layer_coords.append((float(x), float(r)))
+            bl_nodes.append(layer_pts)
+            bl_node_coords.append(layer_coords)
+
+        # --- Create BL triangular surfaces (identical to O-grid) ---
+        bl_surfaces: list[int] = []
+        for i in range(n_body - 1):
+            for k in range(n_bl):
+                bl = bl_nodes[i][k]
+                br = bl_nodes[i + 1][k]
+                tr = bl_nodes[i + 1][k + 1]
+                tl = bl_nodes[i][k + 1]
+                loop1 = gmsh.model.geo.addCurveLoop([
+                    gmsh.model.geo.addLine(bl, br),
+                    gmsh.model.geo.addLine(br, tr),
+                    gmsh.model.geo.addLine(tr, bl),
+                ])
+                surf1 = gmsh.model.geo.addPlaneSurface([loop1])
+                bl_surfaces.append(surf1)
+
+                loop2 = gmsh.model.geo.addCurveLoop([
+                    gmsh.model.geo.addLine(bl, tr),
+                    gmsh.model.geo.addLine(tr, tl),
+                    gmsh.model.geo.addLine(tl, bl),
+                ])
+                surf2 = gmsh.model.geo.addPlaneSurface([loop2])
+                bl_surfaces.append(surf2)
+
+        # --- Full 2D: mirror body and BL to lower half ---
+        is_full2d = mesh_config.domain_type == "full2d"
+
+        if is_full2d:
+            x_lower = x_body[::-1]
+            r_lower = -r_body[::-1]
+
+            lower_bl_nodes: list[list[int]] = []
+            for i in range(n_body):
+                layer_pts: list[int] = []
+                for k in range(n_bl + 1):
+                    x = float(bl_node_coords[i][k][0])
+                    r = float(-bl_node_coords[i][k][1])
+                    pt = gmsh.model.geo.addPoint(x, r, 0)
+                    layer_pts.append(pt)
+                lower_bl_nodes.append(layer_pts)
+
+            for i in range(n_body - 1):
+                for k in range(n_bl):
+                    bl = lower_bl_nodes[i][k]
+                    br = lower_bl_nodes[i + 1][k]
+                    tr = lower_bl_nodes[i + 1][k + 1]
+                    tl = lower_bl_nodes[i][k + 1]
+                    loop1 = gmsh.model.geo.addCurveLoop([
+                        gmsh.model.geo.addLine(bl, tr),
+                        gmsh.model.geo.addLine(tr, br),
+                        gmsh.model.geo.addLine(br, bl),
+                    ])
+                    surf1 = gmsh.model.geo.addPlaneSurface([loop1])
+                    bl_surfaces.append(surf1)
+
+                    loop2 = gmsh.model.geo.addCurveLoop([
+                        gmsh.model.geo.addLine(bl, tl),
+                        gmsh.model.geo.addLine(tl, tr),
+                        gmsh.model.geo.addLine(tr, bl),
+                    ])
+                    surf2 = gmsh.model.geo.addPlaneSurface([loop2])
+                    bl_surfaces.append(surf2)
+
+        # ============================================================
+        #  RECTANGULAR BOUNDARY + PHYSICAL GROUPS
+        # ============================================================
+        offset_curves: list[int]
+
+        if is_full2d:
+            # ---- Full 2D: rectangular domain ----
+            # Corner points
+            pt_upstream_upper = gmsh.model.geo.addPoint(float(x_min), float(r_max), 0)
+            pt_upstream_lower = gmsh.model.geo.addPoint(float(x_min), float(-r_max), 0)
+            pt_downstream_upper = gmsh.model.geo.addPoint(float(x_max), float(r_max), 0)
+            pt_downstream_lower = gmsh.model.geo.addPoint(float(x_max), float(-r_max), 0)
+
+            # BL offset splines for upper and lower halves
+            upper_offset_pts = [bl_nodes[i][n_bl] for i in range(n_body)]
+            lower_offset_pts = [lower_bl_nodes[i][n_bl] for i in range(n_body)]
+
+            upper_offset_spline = gmsh.model.geo.addSpline(upper_offset_pts)
+            lower_offset_spline = gmsh.model.geo.addSpline(
+                lower_offset_pts[::-1],
+            )
+
+            # Connect BL offsets at nose and base
+            nose_conn = gmsh.model.geo.addLine(
+                lower_offset_pts[0], upper_offset_pts[0],
+            )
+            base_conn = gmsh.model.geo.addLine(
+                upper_offset_pts[-1], lower_offset_pts[-1],
+            )
+
+            # Inner BL loop (hole in the outer surface)
+            bl_loop = gmsh.model.geo.addCurveLoop([
+                upper_offset_spline,
+                base_conn,
+                lower_offset_spline,
+                nose_conn,
+            ])
+
+            # Outer rectangular boundary (CCW)
+            # Connect BL offset to rectangle corners
+            upstream_upper_conn = gmsh.model.geo.addLine(
+                upper_offset_pts[0], pt_upstream_upper,
+            )
+            upstream_lower_conn = gmsh.model.geo.addLine(
+                pt_upstream_lower, lower_offset_pts[0],
+            )
+            downstream_upper_conn = gmsh.model.geo.addLine(
+                pt_downstream_upper, upper_offset_pts[-1],
+            )
+            downstream_lower_conn = gmsh.model.geo.addLine(
+                lower_offset_pts[-1], pt_downstream_lower,
+            )
+
+            # Rectangle edges
+            upstream_edge = gmsh.model.geo.addLine(pt_upstream_upper, pt_upstream_lower)
+            downstream_edge = gmsh.model.geo.addLine(pt_downstream_lower, pt_downstream_upper)
+            upper_edge = gmsh.model.geo.addLine(pt_upstream_upper, pt_downstream_upper)
+            lower_edge = gmsh.model.geo.addLine(pt_downstream_lower, pt_upstream_lower)
+
+            # Outer loop: rectangle edges + connector lines + BL offset
+            outer_loop = gmsh.model.geo.addCurveLoop([
+                upper_edge,
+                downstream_upper_conn,
+                base_conn,
+                downstream_lower_conn,
+                lower_edge,
+                upstream_lower_conn,
+                nose_conn,
+                upstream_upper_conn,
+            ])
+            outer_surface = gmsh.model.geo.addPlaneSurface(
+                [outer_loop, bl_loop],
+            )
+
+            # --- Physical groups for full 2D ---
+            # Body curves: upper + base + lower
+            upper_body_curves: list[int] = []
+            for i in range(n_body - 1):
+                upper_body_curves.append(
+                    gmsh.model.geo.addLine(bl_nodes[i][0], bl_nodes[i + 1][0])
+                )
+            base_body_curve = gmsh.model.geo.addLine(
+                bl_nodes[n_body - 1][0], lower_bl_nodes[n_body - 1][0],
+            )
+            lower_body_curves: list[int] = []
+            for i in range(n_body - 1):
+                lower_body_curves.append(
+                    gmsh.model.geo.addLine(
+                        lower_bl_nodes[n_body - 1 - i][0],
+                        lower_bl_nodes[n_body - 2 - i][0],
+                    )
+                )
+            gmsh.model.geo.addPhysicalGroup(
+                1,
+                upper_body_curves + [base_body_curve] + lower_body_curves,
+                name="body",
+            )
+
+            # Farfield: all rectangle edges
+            gmsh.model.geo.addPhysicalGroup(
+                1,
+                [upstream_edge, upper_edge, downstream_edge, lower_edge],
+                name="farfield",
+            )
+
+            # Fluid: BL surfaces + outer surface
+            gmsh.model.geo.addPhysicalGroup(
+                2, bl_surfaces + [outer_surface], name="fluid",
+            )
+            # NO sym marker for full 2d
+
+            offset_curves = [upper_offset_spline, lower_offset_spline]
+
+        else:
+            # ---- Axisymmetric: upper-half rectangle only ----
+            # Rounded corner radius
+            corner_radius = min(0.3 * r_max, 10.0 * R_nose)
+
+            # Corner arc points (rounded instead of sharp)
+            # Upper-left corner: arc from (x_min, r_max - corner_radius) to (x_min + corner_radius, r_max)
+            corner_ul_x, corner_ul_r = _generate_rounded_corner_points(
+                cx=float(x_min + corner_radius), cy=float(r_max - corner_radius),
+                x_start=float(x_min), y_start=float(r_max - corner_radius),
+                x_end=float(x_min + corner_radius), y_end=float(r_max), n=10,
+            )
+            # Upper-right corner: arc from (x_max - corner_radius, r_max) to (x_max, r_max - corner_radius)
+            corner_ur_x, corner_ur_r = _generate_rounded_corner_points(
+                cx=float(x_max - corner_radius), cy=float(r_max - corner_radius),
+                x_start=float(x_max - corner_radius), y_start=float(r_max),
+                x_end=float(x_max), y_end=float(r_max - corner_radius), n=10,
+            )
+
+            # Create Gmsh points for corner arcs
+            corner_ul_pts = [gmsh.model.geo.addPoint(float(corner_ul_x[j]), float(corner_ul_r[j]), 0) for j in range(len(corner_ul_x))]
+            corner_ur_pts = [gmsh.model.geo.addPoint(float(corner_ur_x[j]), float(corner_ur_r[j]), 0) for j in range(len(corner_ur_x))]
+
+            # Create corner splines
+            corner_ul_spline = gmsh.model.geo.addSpline(corner_ul_pts)
+            corner_ur_spline = gmsh.model.geo.addSpline(corner_ur_pts)
+
+            # Key corner points for edge connections
+            pt_upstream = corner_ul_pts[0]     # (x_min, r_max - corner_radius)
+            pt_upstream_top = corner_ul_pts[-1] # (x_min + corner_radius, r_max)
+            pt_downstream_top = corner_ur_pts[0] # (x_max - corner_radius, r_max)
+            pt_downstream = corner_ur_pts[-1]   # (x_max, r_max - corner_radius)
+
+            # Axis points
+            pt_upstream_axis = gmsh.model.geo.addPoint(float(x_min), 0.0, 0)
+            pt_downstream_axis = gmsh.model.geo.addPoint(float(x_max), 0.0, 0)
+
+            # BL offset spline (top of BL, inner boundary of outer surface)
+            outer_inner_pts = [bl_nodes[i][n_bl] for i in range(n_body)]
+            offset_spline = gmsh.model.geo.addSpline(outer_inner_pts)
+
+            # Connector lines: BL offset to rectangle boundary
+            # downstream_conn: from BL end to downstream corner
+            downstream_conn = gmsh.model.geo.addLine(outer_inner_pts[-1], pt_downstream)
+            # upstream_conn: from upstream corner to BL start
+            upstream_conn = gmsh.model.geo.addLine(pt_upstream, outer_inner_pts[0])
+
+            # Symmetry lines (along the axis r=0)
+            sym_up_line = gmsh.model.geo.addLine(pt_upstream_axis, bl_nodes[0][0])
+            body_base_axis_pt = gmsh.model.geo.addPoint(float(body_length), 0.0, 0)
+            sym_down_line = gmsh.model.geo.addLine(body_base_axis_pt, pt_downstream_axis)
+
+            # Rectangle edges (with rounded corners)
+            upstream_edge = gmsh.model.geo.addLine(pt_upstream, pt_upstream_axis)
+            downstream_edge = gmsh.model.geo.addLine(pt_downstream_axis, pt_downstream)
+            upper_edge = gmsh.model.geo.addLine(pt_downstream_top, pt_upstream_top)
+
+            # Outer surface loop (CCW in upper half-plane)
+            # Path: offset_spline (nose->base) -> downstream_conn (base->downstream_corner)
+            #       -> corner_ur reversed (downstream_corner->downstream_top) -> upper_edge (top)
+            #       -> corner_ul (upstream_top->upstream_corner) -> upstream_conn (upstream_corner->nose)
+            # Note: corner_ur_spline is negated to reverse direction
+            outer_loop = gmsh.model.geo.addCurveLoop([
+                offset_spline,
+                downstream_conn,
+                -corner_ur_spline,  # Negate to reverse: downstream -> downstream_top
+                upper_edge,
+                corner_ul_spline,   # Already correct: upstream_top -> upstream
+                upstream_conn,
+            ])
+            outer_surface = gmsh.model.geo.addPlaneSurface([outer_loop])
+
+            # --- Physical groups for axisymmetric ---
+            # Body curves
+            body_curves: list[int] = []
+            for i in range(n_body - 1):
+                body_curves.append(
+                    gmsh.model.geo.addLine(bl_nodes[i][0], bl_nodes[i + 1][0])
+                )
+            gmsh.model.geo.addPhysicalGroup(1, body_curves, name="body")
+
+            # Farfield: upstream + upper + downstream edges
+            gmsh.model.geo.addPhysicalGroup(
+                1, [upstream_edge, upper_edge, downstream_edge], name="farfield",
+            )
+
+            # Symmetry: axis lines
+            gmsh.model.geo.addPhysicalGroup(
+                1, [sym_up_line, sym_down_line], name="sym",
+            )
+
+            # Fluid: BL surfaces + outer surface
+            gmsh.model.geo.addPhysicalGroup(
+                2, bl_surfaces + [outer_surface], name="fluid",
+            )
+
+            offset_curves = [offset_spline]
+
+        # --- Synchronize geometry ---
+        gmsh.model.geo.synchronize()
+
+        # ============================================================
+        #  SIZE FIELDS (identical to O-grid)
+        # ============================================================
+        tier_mult = _TIER_SIZE_MULTIPLIERS[mesh_config.mesh_tier]
+
+        gmsh.option.setNumber(
+            "Mesh.CharacteristicLengthMin", 0.1 * R_nose * tier_mult,
+        )
+        gmsh.option.setNumber(
+            "Mesh.CharacteristicLengthMax", 2.0 * body_length * tier_mult,
+        )
+
+        # Background mesh
+        bg_tag = 100
+        gmsh.model.mesh.field.add("Constant", bg_tag)
+        bg_vin = 0.2 * body_length * tier_mult
+        gmsh.model.mesh.field.setNumber(bg_tag, "VIn", bg_vin)
+        gmsh.model.mesh.field.setNumber(bg_tag, "VOut", bg_vin)
+
+        # Shock refinement
+        shock_tag = 300
+        if mesh_config.shock_refinement:
+            _add_shock_refinement(
+                config, mach, mesh_config, shock_tag, tier_mult,
+            )
+
+        # Junction refinement
+        junc_tag = 400
+        _add_junction_refinement(config, mesh_config, junc_tag, tier_mult)
+
+        # Wake refinement
+        wake_tag = 600
+        _add_wake_refinement(config, mesh_config, wake_tag, tier_mult)
+
+        # Distance-based size field for smooth BL-to-farfield transition
+        distance_tag = 700
+        gmsh.model.mesh.field.add("Distance", distance_tag)
+        gmsh.model.mesh.field.setNumbers(distance_tag, "CurvesList", offset_curves)
+
+        bl_edge_spacing = 0.5 * body_length / max(n_body - 1, 1)
+        min_size = max(bl_edge_spacing, 0.01 * tier_mult)
+        max_size = 0.3 * R_nose * tier_mult
+        # Use diagonal distance as ramp for smoother transition
+        ramp_dist = max(r_max, np.hypot(abs(x_min), r_max))
+
+        # Exponential ramp for smoother size transitions (matching C-grid)
+        math_tag = 701
+        gmsh.model.mesh.field.add("MathEval", math_tag)
+        gmsh.model.mesh.field.setString(
+            math_tag,
+            "F",
+            f"{min_size} * Exp(Min(F{distance_tag}, {ramp_dist}) "
+            f"* Log({max_size}/{min_size}) / {ramp_dist})",
+        )
+
+        # Combine fields with Min
+        min_tag = 999
+        field_ids: list[int] = [bg_tag]
+        if mesh_config.shock_refinement:
+            field_ids.append(shock_tag)
+        field_ids.append(junc_tag)
+        field_ids.append(wake_tag)
+        field_ids.append(math_tag)
+
+        gmsh.model.mesh.field.add("Min", min_tag)
+        gmsh.model.mesh.field.setNumbers(min_tag, "FieldsList", field_ids)
+        gmsh.model.mesh.field.setAsBackgroundMesh(min_tag)
+
+        # ============================================================
+        #  MESH GENERATION
+        # ============================================================
+        gmsh.option.setNumber("Mesh.Algorithm", 5)  # Delaunay - better for complex size fields
+        gmsh.option.setNumber("Mesh.Smoothing", 100)
+        gmsh.model.mesh.generate(2)
+        # Multiple optimization passes for better quality
+        gmsh.model.mesh.optimize("Netgen")
+        gmsh.model.mesh.optimize("Laplace2D")
+
+        # --- Export ---
+        gmsh.write(str(output_path))
+
+    except Exception as exc:
+        raise RuntimeError(f"Mesh generation failed: {exc}") from exc
+    finally:
+        try:
+            gmsh.finalize()
+        except OSError:
+            pass
+
+    return output_path

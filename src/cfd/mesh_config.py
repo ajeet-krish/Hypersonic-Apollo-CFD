@@ -134,9 +134,9 @@ class MeshConfig:
             raise ValueError(
                 f"mesh_tier must be 'draft', 'standard', or 'high', got '{self.mesh_tier}'"
             )
-        if self.domain_type not in ("axisymmetric", "full2d", "cgrid", "ogrid"):
+        if self.domain_type not in ("axisymmetric", "full2d", "cgrid", "ogrid", "rectangular"):
             raise ValueError(
-                f"domain_type must be 'axisymmetric', 'full2d', 'cgrid', or 'ogrid', got '{self.domain_type}'"
+                f"domain_type must be 'axisymmetric', 'full2d', 'cgrid', 'ogrid', or 'rectangular', got '{self.domain_type}'"
             )
         if self.n_axial_nose < 10:
             raise ValueError(
@@ -190,7 +190,7 @@ class MeshConfig:
         For full2d domains the farfield is slightly larger to accommodate
         the mirrored body geometry without clipping the shock layer.
         """
-        if self.domain_type in ("full2d", "cgrid"):
+        if self.domain_type in ("full2d", "cgrid", "rectangular"):
             return self.farfield_distance * 1.2
         return self.farfield_distance
 
