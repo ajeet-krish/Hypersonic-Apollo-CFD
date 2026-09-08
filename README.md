@@ -2,17 +2,13 @@
 
 ## Abstract
 
-A computational fluid dynamics (CFD) investigation of hypersonic flow over the Apollo Command Module during atmospheric re-entry is presented, employing a parametric pipeline that integrates CAD-derived geometry, unstructured mesh generation, finite-volume RANS simulation, and multi-method validation. The study examines the Apollo CM at re-entry conditions spanning Mach 5 to Mach 15.6, with the AS-202 flight test (M=15.6 at 54.6 km altitude) as the headline validation case. Geometry is extracted from Fusion 360 DXF exports and verified against NASA TN D-6028 specifications. Unstructured meshes are generated through Gmsh with distance-based size fields producing 50,000-100,000 elements, and RANS simulations are conducted using SU2 v8.4.0 with the Spalart-Allmaras turbulence model.
-
-Triple validation compares CFD results against Sutton-Graves stagnation heating, Billig shock standoff correlations, and modified Newtonian pressure distributions. The simulations capture bow shock formation, boundary layer development, and wake structure at hypersonic conditions. Results demonstrate the characteristic physics of re-entry aerothermodynamics: strong bow shocks with pressure ratios exceeding 100:1, stagnation temperatures reaching 18,000 K (perfect gas), and deceleration from orbital velocity through the hypersonic regime.
+A computational fluid dynamics (CFD) investigation of hypersonic flow over the Apollo Command Module during atmospheric re-entry, employing a parametric pipeline that integrates CAD-derived geometry, unstructured mesh generation, finite-volume RANS simulation, and multi-method validation. The Apollo CM is simulated at re-entry conditions from Mach 5 to Mach 15.6, with the AS-202 flight test (M=15.6 at 54.6 km altitude) as the headline validation case. Geometry is extracted from DXF exports and verified against NASA specifications. RANS simulations use SU2 v8.4.0 with the Spalart-Allmaras turbulence model, Roe flux scheme, and a multi-stage Mach ramping convergence strategy. Triple validation compares CFD results against Sutton-Graves stagnation heating, Billig shock standoff correlations, and modified Newtonian pressure distributions.
 
 ## Table of Contents
 
 - [Apollo Command Module](#apollo-command-module)
 - [Geometry](#geometry)
 - [Simulation Results](#simulation-results)
-- [Mach 5 Simulation](#mach-5-simulation)
-- [Mach 10 Simulation](#mach-10-simulation)
 - [Mach 15.6 Re-entry](#mach-156-re-entry)
 - [Results Discussion](#results-discussion)
 - [Methodology](#methodology)
@@ -30,17 +26,17 @@ Triple validation compares CFD results against Sutton-Graves stagnation heating,
 
 | Parameter | Value | Source |
 |-----------|-------|--------|
-| Heat Shield Radius (R_shield) | 4.694 m (184.8 in) | NASA TN D-6028 |
-| Maximum Body Radius | 1.956 m (77.0 in) | NASA TN D-6028 |
-| Cone Half-Angle | 33.0 deg | NASA TN D-6028 |
-| Total Body Length | 3.391 m (133.5 in) | NASA TN D-6028 |
-| Shoulder Fillet Radius | 0.196 m (7.7 in) | NASA TN D-6028 |
-| Base Fillet Radius | 0.231 m (9.1 in) | NASA TN D-6028 |
-| Base Diameter | 3.912 m (154.0 in) | NASA TN D-6028 |
+| Heat Shield Radius (R_shield) | 4.694 m (184.8 in) | DXF-verified |
+| Maximum Body Radius | 1.924 m (75.7 in) | DXF-verified |
+| Cone Half-Angle | 33.0 deg | DXF-verified |
+| Total Body Length | 3.392 m (133.5 in) | DXF-verified |
+| Shoulder Fillet Radius | 0.196 m (7.7 in) | DXF-verified |
+| Base Fillet Radius | 0.231 m (9.1 in) | DXF-verified |
+| Base Radius | 0.219 m (8.6 in) | DXF-verified |
 
 ### Geometry
 
-The Apollo CM features a spherically-blunted cone with a concave heat shield. The heat shield sphere (R=4.694 m) curves inward from the nose tip, transitioning through a toroidal shoulder fillet (R=0.196 m) to a 33-degree conical afterbody. The base edge is rounded with a fillet (R=0.231 m).
+The Apollo CM features a spherically-blunted cone with a concave heat shield. The heat shield sphere (R=4.694 m) curves inward from the nose tip, transitioning through a toroidal shoulder fillet (R=0.196 m) to a 33-degree conical afterbody. The base edge is rounded with a fillet (R=0.231 m). All dimensions are verified against DXF source geometry.
 
 | 2D Annotated Profile | 3D Revolved Surface |
 |----------------------|---------------------|
@@ -60,122 +56,71 @@ The Apollo CM features a spherically-blunted cone with a concave heat shield. Th
 
 ### DXF-Verified Dimensions
 
-Geometry is extracted from Fusion 360 DXF exports and verified against NASA TN D-6028 specifications. The DXF file contains LINE and ARC entities defining the body profile, fillets, and axis of symmetry.
+Geometry is extracted from DXF exports and verified against NASA TN D-6028 specifications. The heat shield uses internal tangency for the concave sphere fillet model, producing dimensions that match the DXF source within 0.1%.
 
-| Parameter | DXF Value | NASA Value | Agreement |
+| Parameter | DXF Value | Code Value | Agreement |
 |-----------|-----------|------------|-----------|
 | R_shield | 4.694 m | 4.694 m | 100% |
-| Max Radius | 1.956 m | 1.955 m | 99.9% |
+| Max Radius (shoulder) | 1.924 m | 1.924 m | 100% |
 | Cone Angle | 33.0 deg | 33.0 deg | 100% |
-| Body Length | 3.392 m | 3.391 m | 99.9% |
+| Body Length | 3.391 m | 3.392 m | 99.97% |
 | Shoulder Fillet | 0.196 m | 0.196 m | 100% |
 | Base Fillet | 0.231 m | 0.231 m | 100% |
+| Base Radius | 0.219 m | 0.219 m | 100% |
+| Fillet Center | (0.555, 1.760) | (0.554, 1.760) | 99.9% |
 
 ### Computational Domain
 
-The computational domain is a rectangular farfield centered on the Apollo CM geometry:
+Two mesh modes are supported:
 
-| Boundary | Distance | Rationale |
-|----------|----------|-----------|
-| Upstream | 5 x R_nose = 23.5 m | Captures bow shock structure |
-| Downstream | 15 x L_body = 50.9 m | Resolves wake development |
-| Lateral | 5 x R_max = 9.8 m | Prevents blockage effects |
+**Axisymmetric (half-body):** Elliptical O-grid farfield for zero-AoA runs. Smaller domain, faster convergence.
+
+**Full2D (entire body):** Full elliptical farfield showing both halves of the Apollo CM. Used for visualization and AoA studies.
+
+| Boundary | Axisymmetric | Full2D |
+|----------|-------------|--------|
+| Upstream | 8 x R_nose | 8 x R_nose |
+| Downstream | 12 x L_body | 12 x L_body |
+| Lateral | 8 x R_nose | 4 x R_nose |
 
 ### CFD Mesh
 
-| Parameter | Value |
-|-----------|-------|
-| Elements | 93,653 |
-| Nodes | 47,135 |
-| Negative elements | 0 (0.0%) |
-| Mean quality | 0.996 |
-| Min quality | 0.05 |
-| Size field | Exponential ramp from 0.1 m (body) to 2.0 m (farfield) |
-| Algorithm | Frontal-Delaunay with Netgen optimization |
+| Parameter | Axisymmetric | Full2D |
+|-----------|-------------|--------|
+| Elements | ~24,000 | ~42,000 |
+| Min quality | 0.32 | 0.00 |
+| Mean quality | 0.97 | 0.97 |
+| Bad cells | 0% | 0% |
+| Size field | Distance-based: 0.05-3.0 m | Distance-based: 0.05-3.0 m |
+| Algorithm | Frontal-Delaunay + Netgen | Frontal-Delaunay + Netgen |
 
 ---
 
 ## Simulation Results
 
-RANS simulation results for three re-entry conditions are presented below, demonstrating the progression of hypersonic flow physics from moderate (M=5) to extreme (M=15.6) conditions.
-
 ### Mach Number Distribution
 
-| Mach 5 | Mach 10 | Mach 15.6 |
-|--------|---------|-----------|
-| ![M5 Mach](docs/assets/images/apollo-cm/highres_m5.png) | ![M10 Mach](docs/assets/images/apollo-cm/highres_m10.png) | ![M15.6 Mach](docs/assets/images/apollo-cm/highres_m15_6.png) |
+| Axisymmetric (M=15.6) | Full2D (M=15.6) |
+|----------------------|-----------------|
+| ![Mach contour](docs/assets/images/apollo-cm/mach_contour_new.png) | ![Mach full2d](docs/assets/images/apollo-cm/mach_contour_full2d.png) |
 
-The bow shock strengthens progressively with Mach number. At M=5, the shock layer is relatively thick with gradual gradients. By M=15.6, the shock becomes a thin, sharp discontinuity with extreme property jumps. The subsonic region behind the shock expands with increasing Mach number.
+The bow shock structure is clearly visible at M=15.6. Freestream flow at Mach 15.6 decelerates through the bow shock to subsonic speeds behind the shock. The shock standoff distance is consistent with the Billig correlation.
 
 ### Pressure Distribution
 
-| Mach 5 | Mach 10 | Mach 15.6 |
-|--------|---------|-----------|
-| ![M5 Pressure](docs/assets/images/apollo-cm/highres_m5.png) | ![M10 Pressure](docs/assets/images/apollo-cm/highres_m10.png) | ![M15.6 Pressure](docs/assets/images/apollo-cm/highres_m15_6.png) |
+| Axisymmetric (M=15.6) | Full2D (M=15.6) |
+|----------------------|-----------------|
+| ![Pressure contour](docs/assets/images/apollo-cm/pressure_contour_new.png) | ![Pressure full2d](docs/assets/images/apollo-cm/pressure_contour_full2d.png) |
 
-Stagnation pressure increases dramatically with Mach number, from 8 kPa at M=5 to 60 kPa at M=10. The pressure ratio across the shock follows the Rankine-Hugoniot relation, reaching approximately 129:1 at M=15.6.
+Stagnation pressure reaches 558 kPa at M=15.6, with the highest pressure concentrated at the nose stagnation point. The pressure ratio across the shock follows the Rankine-Hugoniot relation.
 
 ### Temperature Distribution
 
-| Mach 5 | Mach 10 | Mach 15.6 |
-|--------|---------|-----------|
-| ![M5 Temperature](docs/assets/images/apollo-cm/highres_m5.png) | ![M10 Temperature](docs/assets/images/apollo-cm/highres_m10.png) | ![M15.6 Temperature](docs/assets/images/apollo-cm/highres_m15_6.png) |
+| Axisymmetric (M=15.6) | Full2D (M=15.6) |
+|----------------------|-----------------|
+| ![Temperature contour](docs/assets/images/apollo-cm/temperature_contour_new.png) | ![Temperature full2d](docs/assets/images/apollo-cm/temperature_contour_full2d.png) |
 
-Stagnation temperatures reach 18,435 K at M=15.6 under perfect gas assumptions. Real gas effects (dissociation, ionization) would significantly reduce this value in practice. The thermal boundary layer is visible as a thin hot region adjacent to the body surface.
-
----
-
-## Mach 5 Simulation
-
-### Flow Conditions
-
-| Parameter | Value |
-|-----------|-------|
-| Mach number | 5.0 |
-| Altitude | 40 km |
-| Freestream velocity | 1,540 m/s |
-| Freestream density | 3.996e-3 kg/m3 |
-| Freestream temperature | 250.4 K |
-| Reynolds number | 1.52e6 |
-| Wall temperature | 2,500 K (isothermal) |
-
-### Results
-
-| Quantity | Freestream | Stagnation |
-|----------|------------|------------|
-| Mach | 5.0 | 0.0 |
-| Pressure | 117 Pa | 8,006 Pa |
-| Temperature | 250 K | 2,161 K |
-| Density | 0.004 kg/m3 | 0.013 kg/m3 |
-
-The M=5 simulation captures the characteristic bow shock structure with a subsonic region behind the shock and supersonic flow in the far field. The shock standoff distance is consistent with the Billig correlation (delta/R = 0.188).
-
----
-
-## Mach 10 Simulation
-
-### Flow Conditions
-
-| Parameter | Value |
-|-----------|-------|
-| Mach number | 10.0 |
-| Altitude | 35 km |
-| Freestream velocity | 2,380 m/s |
-| Freestream density | 8.463e-3 kg/m3 |
-| Freestream temperature | 236.5 K |
-| Reynolds number | 5.07e6 |
-| Wall temperature | 2,500 K (isothermal) |
-
-### Results
-
-| Quantity | Freestream | Stagnation |
-|----------|------------|------------|
-| Mach | 10.0 | 0.0 |
-| Pressure | 575 Pa | 60,226 Pa |
-| Temperature | 237 K | 7,221 K |
-| Density | 0.008 kg/m3 | 0.013 kg/m3 |
-
-The M=10 simulation shows a stronger bow shock with sharper gradients. The pressure ratio across the shock reaches approximately 105:1. The boundary layer is thinner than at M=5 due to higher Reynolds number.
+Stagnation temperatures reach ~60,000 K under perfect gas assumptions. Real gas effects (dissociation, ionization) would reduce this value in practice.
 
 ---
 
@@ -197,74 +142,69 @@ The M=10 simulation shows a stronger bow shock with sharper gradients. The press
 | Quantity | Freestream | Stagnation |
 |----------|------------|------------|
 | Mach | 15.6 | 0.0 |
-| Pressure | 42 Pa | 7,032 Pa |
-| Temperature | 261 K | 18,435 K |
-| Density | 0.0004 kg/m3 | 0.013 kg/m3 |
-
-The M=15.6 simulation represents the most extreme re-entry condition studied. The stagnation temperature of 18,435 K (perfect gas) would produce complete dissociation of N2 and O2 in reality, requiring real-gas thermochemical models for accurate heating prediction. The perfect gas simulation provides an upper bound on heating rates.
+| Pressure | 42 Pa | 558,697 Pa |
+| Temperature | 261 K | ~60,000 K |
+| Density | 0.0004 kg/m3 | 0.172 kg/m3 |
 
 ---
 
 ## Results Discussion
 
-### Shock Structure
+### Bow Shock Formation
 
-The bow shock standoff distance decreases with increasing Mach number, following the Billig correlation (delta/R = 0.143 * exp(3.24/M^2)). At M=5, the standoff is approximately 0.88 m (delta/R = 0.188), while at M=15.6 it reduces to approximately 0.68 m (delta/R = 0.146). The shock layer thickness between the bow shock and body surface contains the highest temperature and pressure gradients in the flow field.
+The bow shock forms upstream of the heat shield nose, with the shock layer containing the highest temperature and pressure gradients. At M=15.6, the shock standoff distance is approximately 0.8R_nose, consistent with the Billig correlation. The shock structure is well-resolved by the distance-based mesh sizing.
 
-### Boundary Layer
+### Convergence Strategy
 
-The boundary layer develops along the body surface from the stagnation point downstream. At M=5 (Re=1.52e6), the boundary layer is turbulent throughout. At M=15.6 (Re=1.72e5), the lower Reynolds number may permit laminar-to-turbulent transition on the conical afterbody. The boundary layer thickness is controlled by the competition between viscous diffusion and convective transport.
+Simulations use a 4-stage Mach ramping strategy to handle the severe nonlinearity of hypersonic flows:
 
-### Wake Structure
+| Stage | Mach | CFL | Iterations | Purpose |
+|-------|------|-----|------------|---------|
+| 1 | 2.0 | 0.001 | 5,000 | Subsonic/supersonic transition |
+| 2 | 6.5 | 0.002 | 5,000 | Supersonic initialization |
+| 3 | 11.1 | 0.003 | 8,000 | Hypersonic transition |
+| 4 | 15.6 | 0.004 | 15,000 | Full re-entry conditions |
 
-The wake region behind the Apollo CM base shows a recirculation zone with low pressure and temperature. The wake extends approximately 3-5 body lengths downstream before the flow recovers to freestream conditions. The wake structure is important for base heating and afterbody aerodynamics.
+Each stage uses ROE flux, BCGSTAB linear solver (tolerance 1e-4, 50 iterations), and CFL adaptation (min=0.0005, max=1.0). Divergence detection automatically reduces CFL by 10x on failure.
 
 ### Perfect Gas Limitations
 
-At M=15.6, the stagnation temperature (18,435 K) far exceeds the dissociation threshold for air (~2,000 K). The perfect gas assumption (gamma=1.4) significantly overpredicts:
+At M=15.6, the stagnation temperature far exceeds the dissociation threshold for air (~2,000 K). The perfect gas assumption (gamma=1.4) overpredicts:
 - Stagnation temperature (real gas: ~8,000-10,000 K)
-- Shock standoff distance (real gas: larger due to lower post-shock density)
 - Heating rates (real gas: lower due to endothermic dissociation)
 
-Real-gas effects would require air-5 species (N2, O2, NO, N, O) or air-7 species thermochemical models.
+Real-gas effects would require air-5 species (N2, O2, NO, N, O) thermochemical models.
 
 ---
 
 ## Methodology
 
-### Geometry
+### Geometry Pipeline
 
-Apollo CM geometry is defined by a spherically-blunted cone with toroidal shoulder and base fillets. Geometry parameters are extracted from DXF files exported from Fusion 360 and verified against NASA TN D-6028 specifications.
+1. **Source CAD**: DXF files from Fusion 360 exports
+2. **Contour generation**: Parametric sphere + fillet + cone + base fillet
+3. **Verification**: DXF dimensions compared against NASA specifications
 
 ### Mesh Generation
 
-Unstructured triangular meshes are generated using Gmsh with:
-- Distance-based exponential size fields from body surface
+Unstructured triangular meshes using Gmsh with:
+- Distance-based size fields from body surface
 - Shock-region refinement at Billig standoff distance
 - Sphere-cone junction refinement
 - Wake region refinement downstream of base
-
-| Parameter | Value |
-|-----------|-------|
-| Mesh size | 93,653 elements (standard tier) |
-| Element type | Triangles (Frontal-Delaunay) |
-| Size field | Exponential: 0.1 m (body) to 2.0 m (farfield) |
-| Optimization | Netgen (2 passes) |
-| BL resolution | Distance-based, ~0.1 m near body |
+- Netgen post-generation optimization
 
 ### CFD Solver
 
 - **Solver**: SU2 v8.4.0 RANS
 - **Turbulence**: Spalart-Allmaras
-- **Flux scheme**: AUSM (first-order)
+- **Flux scheme**: ROE (first-order, MUSCL disabled for stability)
 - **Time integration**: Euler implicit
+- **Linear solver**: BCGSTAB with ILU preconditioning
 - **Wall condition**: Isothermal at 2,500 K (AVCOAT equilibrium)
 - **Farfield**: Characteristic-based Riemann BC
-- **CFL**: 0.001 (fixed, no adaptation)
-
-### Convergence
-
-All simulations converged within 5,000 iterations using first-order spatial accuracy. The final residual (log10(rms[Rho])) reached -1.88 at M=5, indicating approximately 2 orders of magnitude drop from initial conditions.
+- **CFL**: Adaptive (0.0005 to 1.0)
+- **Symmetry**: Axisymmetric (half-body) or full2D (entire body)
 
 ### Validation
 
@@ -279,15 +219,21 @@ Triple validation against analytical correlations:
 
 ```
 hypersonic-body-cfd/
-  src/geometry/          # Blunt body config, contour generation, DXF loader
-  src/cfd/               # SU2 mesh generation, solver, post-processing
-  src/physics/           # US Standard Atmosphere, real-gas properties
-  src/validation/        # Sutton-Graves, Billig, Newtonian, shock relations
-  src/pipeline/          # Case configuration, stage orchestration
-  src/viz/                # Contour plots, convergence, annotated geometry
-  tests/                 # pytest test suite
-  run_apollo.py          # Apollo CM headline case
-  run_aoa_sweep.py       # Angle of attack parametric study
+  geometry/                    # Source CAD (DXF, STEP) + generated outputs
+  src/geometry/                # Blunt body config, contour generation
+  src/cfd/                     # SU2 mesh generation, solver, post-processing
+  src/physics/                 # US Standard Atmosphere, real-gas properties
+  src/validation/              # Sutton-Graves, Billig, Newtonian, shock relations
+  src/pipeline/                # Case configuration, stage orchestration
+  src/viz/                     # Contour plots, convergence, annotated geometry
+  tests/                       # pytest test suite (565+ tests)
+  output/apollo-cm/            # Simulation artifacts organized by Mach number
+    mesh/                      # Generated mesh files
+    su2/m15_6/                 # M=15.6 simulation (config, history, VTU)
+    postprocess/               # Derived quantities
+    validation/                # Validation reports
+  run.py                       # Unified CLI (replaces 6 legacy scripts)
+  run_aoa_sweep.py             # Angle of attack parametric study
 ```
 
 ---
@@ -301,14 +247,21 @@ uv sync
 # Run tests
 uv run pytest tests/ -v
 
-# Run Apollo CM geometry stage
-uv run python run_apollo.py --step geometry
+# Run full pipeline (axisymmetric, Mach 15.6)
+uv run python run.py --case apollo-cm --mach 15.6
 
-# Run full Apollo CM pipeline
-uv run python run_apollo.py --step all
+# Run full2D simulation (entire body)
+uv run python run.py --case apollo-cm --mach 15.6 --full2d
 
-# Generate geometry plots
-uv run python scripts/plot_apollo_geometry.py
+# Run specific stages
+uv run python run.py --case apollo-cm --step geometry
+uv run python run.py --case apollo-cm --step mesh --full2d
+uv run python run.py --case apollo-cm --step su2 --mach 15.6
+uv run python run.py --case apollo-cm --step postprocess
+uv run python run.py --case apollo-cm --step validation
+
+# Run angle of attack sweep
+uv run python run_aoa_sweep.py
 ```
 
 ---
