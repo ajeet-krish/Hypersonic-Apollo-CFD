@@ -174,12 +174,56 @@ def generate_3d_mesh(
 
         gmsh.model.geo.synchronize()
 
+        # --- Boundary layer (prismatic layers at body wall) ---
+        if body_surfs_after and mesh_config.boundary_layers > 0:
+            print(f"  Adding {mesh_config.boundary_layers} prismatic BL layers...")
+            bl_tag = 1
+            gmsh.model.mesh.field.add("BoundaryLayer", bl_tag)
+
+            # Set BL parameters
+            gmsh.model.mesh.field.setNumbers(bl_tag, "CurvesList", [])
+            gmsh.model.mesh.field.setNumbers(bl_tag, "SurfacesList", body_surfs_after)
+            gmsh.model.mesh.field.setNumber(bl_tag, "Quads", 0)  # Triangles in BL
+            gmsh.model.mesh.field.setNumber(bl_tag, "NbLayers", mesh_config.boundary_layers)
+            gmsh.model.mesh.field.setNumber(bl_tag, "hfar", mesh_config.max_element_size * 0.5)
+            gmsh.model.mesh.field.setNumber(bl_tag, "hwall_n", mesh_config.effective_first_cell_height(4.694))
+            gmsh.model.mesh.field.setNumber(bl_tag, "thickness", mesh_config.max_element_size * 0.3)
+            gmsh.model.mesh.field.setNumber(bl_tag, "ratio", mesh_config.bl_growth_ratio)
+            gmsh.model.mesh.field.setNumber(bl_tag, "FontSize", 2)
+            gmsh.model.mesh.field.setAsBoundaryLayer(bl_tag)
+
         # --- Size fields ---
         # Distance field from body surfaces for smooth size transition
         distance_tag = 100
         gmsh.model.mesh.field.add("Distance", distance_tag)
         if body_surfs_after:
             gmsh.model.mesh.field.setNumbers(distance_tag, "SurfacesList", body_surfs_after)
+
+        # Shock refinement: Ball field at expected shock location
+        shock_tag = 400
+        gmsh.model.mesh.field.add("Ball", shock_tag)
+        # Shock standoff: delta/R = 0.143 * exp(3.24/M^2) for M=15.6
+        import math
+        standoff_ratio = 0.143 * math.exp(3.24 / (15.6 ** 2))
+        shock_x = bbox.x_min + standoff_ratio * R_nose_mm
+        gmsh.model.mesh.field.setNumber(shock_tag, "XCenter", shock_x)
+        gmsh.model.mesh.field.setNumber(shock_tag, "YCenter", 0.0)
+        gmsh.model.mesh.field.setNumber(shock_tag, "ZCenter", 0.0)
+        gmsh.model.mesh.field.setNumber(shock_tag, "VIn", mesh_config.min_element_size * 2)
+        gmsh.model.mesh.field.setNumber(shock_tag, "VOut", mesh_config.max_element_size * 0.5)
+        gmsh.model.mesh.field.setNumber(shock_tag, "Radius", standoff_ratio * R_nose_mm * 2)
+
+        # Wake refinement: Box field downstream of body
+        wake_tag = 500
+        gmsh.model.mesh.field.add("Box", wake_tag)
+        gmsh.model.mesh.field.setNumber(wake_tag, "XMin", bbox.x_max)
+        gmsh.model.mesh.field.setNumber(wake_tag, "XMax", bbox.x_max + 10.0 * R_nose_mm)
+        gmsh.model.mesh.field.setNumber(wake_tag, "YMin", -bbox.y_max * 0.5)
+        gmsh.model.mesh.field.setNumber(wake_tag, "YMax", bbox.y_max * 0.5)
+        gmsh.model.mesh.field.setNumber(wake_tag, "ZMin", -bbox.z_max * 0.5)
+        gmsh.model.mesh.field.setNumber(wake_tag, "ZMax", bbox.z_max * 0.5)
+        gmsh.model.mesh.field.setNumber(wake_tag, "VIn", mesh_config.min_element_size * 3)
+        gmsh.model.mesh.field.setNumber(wake_tag, "VOut", mesh_config.max_element_size * 0.7)
 
         # MathEval: ramp from min_size near body to max_size in farfield
         size_tag = 200
@@ -201,7 +245,7 @@ def generate_3d_mesh(
         # Combine fields with Min
         min_tag = 999
         gmsh.model.mesh.field.add("Min", min_tag)
-        gmsh.model.mesh.field.setNumbers(min_tag, "FieldsList", [size_tag, bg_tag])
+        gmsh.model.mesh.field.setNumbers(min_tag, "FieldsList", [size_tag, shock_tag, wake_tag, bg_tag])
         gmsh.model.mesh.field.setAsBackgroundMesh(min_tag)
 
         # --- Mesh generation ---

@@ -342,3 +342,59 @@ class ConvergenceStrategy:
             cfl_adapt_increase=1.2,
         )
         return cls(stages=[stage1, stage2, stage3, stage4])
+
+    @classmethod
+    def for_3d_mach(cls, target_mach: float, n_stages: int = 4) -> "ConvergenceStrategy":
+        """Create a convergence strategy optimized for 3D meshes.
+
+        3D meshes are 10-50x larger than 2D, requiring:
+        - Lower CFL (0.0005-0.002) for stability
+        - More iterations per stage
+        - FGMRES linear solver (better for 3D systems)
+        - Tighter linear solver tolerance
+
+        Args:
+            target_mach: Target freestream Mach number.
+            n_stages: Number of stages (minimum 2).
+
+        Returns:
+            ConvergenceStrategy optimized for 3D meshes.
+        """
+        n_stages = max(2, n_stages)
+        start_mach = 2.0
+
+        # Generate intermediate Mach numbers
+        mach_numbers = []
+        for i in range(n_stages):
+            frac = i / (n_stages - 1)
+            mach_val = start_mach + frac * (target_mach - start_mach)
+            mach_numbers.append(mach_val)
+
+        stages = []
+        for i, mach_val in enumerate(mach_numbers):
+            is_last = i == len(mach_numbers) - 1
+
+            # Conservative CFL for 3D (lower than 2D)
+            cfl_val = 0.0005 + 0.0003 * i
+
+            # More iterations for 3D (larger mesh)
+            iters = 10000 if is_last else 5000 + 2000 * i
+
+            stage = ConvergenceStage(
+                name=f"Stage {i + 1}: M={mach_val:.1f}",
+                mach=mach_val,
+                cfl=cfl_val,
+                iterations=iters,
+                muscl=False,
+                conv_method="ROE",
+                linear_solver="FGMRES",  # Better for 3D systems
+                linear_solver_error=1e-6,  # Tighter tolerance for 3D
+                linear_solver_iter=100,  # More iterations for 3D
+                cfl_adapt_min=0.0001,
+                cfl_adapt_max=0.5,  # Lower max CFL for 3D stability
+                cfl_adapt_decrease=0.5,
+                cfl_adapt_increase=1.1,  # More conservative growth
+            )
+            stages.append(stage)
+
+        return cls(stages=stages)

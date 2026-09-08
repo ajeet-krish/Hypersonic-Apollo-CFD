@@ -364,8 +364,13 @@ def run_su2_stage(config: CaseConfig) -> int:
     from cfd.convergence import ConvergenceStrategy
 
     # Use mach_ramp for high-Mach cases (starts at M=2 for gentle initialization)
+    # For 3D meshes, use the specialized 3D convergence strategy
     if config.convergence_strategy:
         strategy = config.convergence_strategy
+    elif config.is_3d:
+        # 3D meshes need more conservative settings
+        strategy = ConvergenceStrategy.for_3d_mach(config.mach, n_stages=4)
+        print(f"  Using 3D-optimized convergence strategy")
     elif config.mach > 10.0:
         strategy = ConvergenceStrategy.mach_ramp(config.mach, n_stages=4)
     else:
