@@ -16,6 +16,7 @@ class PipelineStage(Enum):
     """Pipeline execution stages."""
     GEOMETRY = "geometry"
     MESH = "mesh"
+    MESH3D = "mesh3d"
     SU2 = "su2"
     POSTPROCESS = "postprocess"
     VALIDATION = "validation"
@@ -62,6 +63,8 @@ class CaseConfig:
     su2_mach_ramp_start: float = 5.0
     convergence_strategy: ConvergenceStrategy | None = None
     full2d: bool = False  # Show entire body (both halves), not axisymmetric half
+    is_3d: bool = False  # Enable 3D simulation mode
+    step_file: str = "geometry/apollo_3d.step"  # STEP file for 3D geometry
 
     @property
     def output_dir(self) -> str:

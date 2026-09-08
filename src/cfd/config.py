@@ -407,6 +407,19 @@ MESH_FORMAT= SU2
         new.axisymmetric = False
         return new
 
+    def as_3d(self) -> "SU2HypersonicConfig":
+        """Return a copy configured for 3D simulation.
+
+        Used for full 3D simulations where the body is not axisymmetric,
+        such as angle of attack studies with non-axisymmetric geometry.
+
+        Returns:
+            New SU2HypersonicConfig with AXISYMMETRIC=NO.
+        """
+        new = copy.deepcopy(self)
+        new.axisymmetric = False
+        return new
+
 
 def get_su2_binary() -> Path:
     """Locate the SU2_CFD binary.

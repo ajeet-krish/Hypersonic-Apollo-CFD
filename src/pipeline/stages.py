@@ -237,6 +237,55 @@ def run_mesh_stage(config: CaseConfig) -> int:
     return 0 if is_valid else 1
 
 
+def run_mesh3d_stage(config: CaseConfig) -> int:
+    """Generate a 3D tetrahedral mesh from STEP geometry.
+
+    Produces:
+        - output/{name}/mesh/{name}_3d.su2: SU2 3D mesh file
+        - output/{name}/mesh/mesh3d_quality.json: mesh quality metrics
+
+    Returns:
+        0 on success, 1 on failure.
+    """
+    print(f"\n[{config.label}] 3D Mesh stage")
+
+    from cfd.mesh3d import generate_3d_mesh
+    from cfd.mesh3d_config import Mesh3DConfig
+    from geometry.step_loader import load_step
+
+    # Load STEP geometry
+    step_path = Path("geometry/apollo_3d.step")
+    if not step_path.exists():
+        print(f"  ERROR: STEP file not found at {step_path}")
+        return 1
+
+    print(f"  Loading: {step_path}")
+    geometry = load_step(step_path)
+    print(f"  Surfaces: {len(geometry.surfaces)}")
+    print(f"  Volumes: {len(geometry.volumes)}")
+    print(f"  Bounding box: {geometry.bbox.size_x:.2f} x {geometry.bbox.size_y:.2f} x {geometry.bbox.size_z:.2f}")
+
+    # Create 3D mesh config
+    mesh_config = Mesh3DConfig.for_tier(config.mesh_tier)
+
+    mesh_dir = Path(config.output_dir) / "mesh"
+    mesh_dir.mkdir(parents=True, exist_ok=True)
+    mesh_path = mesh_dir / f"{config.name}_3d.su2"
+
+    print(f"  Tier: {config.mesh_tier}")
+    print(f"  Farfield radius: {mesh_config.farfield_radius_factor}x body length")
+
+    try:
+        generate_3d_mesh(geometry, mesh_config, mesh_path)
+    except (RuntimeError, OSError) as exc:
+        print(f"  3D Mesh generation FAILED: {exc}")
+        return 1
+
+    print(f"  Mesh: {mesh_path} ({mesh_path.stat().st_size:,} bytes)")
+
+    return 0
+
+
 def run_su2_stage(config: CaseConfig) -> int:
     """Run SU2 CFD simulation for the blunt body.
 
@@ -1001,6 +1050,7 @@ def run_apollo_stage(config: CaseConfig) -> int:
 STAGE_FUNCTIONS: dict[PipelineStage, Callable[[CaseConfig], int]] = {
     PipelineStage.GEOMETRY: run_geometry_stage,
     PipelineStage.MESH: run_mesh_stage,
+    PipelineStage.MESH3D: run_mesh3d_stage,
     PipelineStage.SU2: run_su2_stage,
     PipelineStage.POSTPROCESS: run_postprocess_stage,
     PipelineStage.VALIDATION: run_validation_stage,
