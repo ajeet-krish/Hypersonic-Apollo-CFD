@@ -61,6 +61,15 @@ class Mesh3DConfig:
             raise ValueError(
                 f"bl_growth_ratio must be in [1.01, 1.5], got {self.bl_growth_ratio}"
             )
+        if self.min_element_size <= 0:
+            raise ValueError(
+                f"min_element_size must be > 0, got {self.min_element_size}"
+            )
+        if self.max_element_size <= self.min_element_size:
+            raise ValueError(
+                f"max_element_size must be > min_element_size ({self.min_element_size}), "
+                f"got {self.max_element_size}"
+            )
 
     def effective_first_cell_height(self, R_nose: float) -> float:
         """Return effective first cell height for y+ < 1.

@@ -138,7 +138,8 @@ def generate_3d_mesh(
             )
 
             # Check if surface is on symmetry plane (y=0)
-            is_sym = abs(cy) < 1.0 and abs(cy) < 1.0
+            # Symmetry surfaces are thin (small extent in y) and centered at y=0
+            is_sym = abs(cy) < 1.0 and (ymax - ymin) < 2.0
 
             if is_body:
                 body_surfs_after.append(surf_tag)

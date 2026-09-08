@@ -410,8 +410,10 @@ MESH_FORMAT= SU2
     def as_3d(self) -> "SU2HypersonicConfig":
         """Return a copy configured for 3D simulation.
 
-        Used for full 3D simulations where the body is not axisymmetric,
-        such as angle of attack studies with non-axisymmetric geometry.
+        Sets AXISYMMETRIC=NO for full 3D simulations. This is functionally
+        identical to as_full2d() since both disable the axisymmetric formulation.
+
+        For angle of attack studies, use with_aoa() after calling this method.
 
         Returns:
             New SU2HypersonicConfig with AXISYMMETRIC=NO.

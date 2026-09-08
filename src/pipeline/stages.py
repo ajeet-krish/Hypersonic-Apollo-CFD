@@ -254,7 +254,7 @@ def run_mesh3d_stage(config: CaseConfig) -> int:
     from geometry.step_loader import load_step
 
     # Load STEP geometry
-    step_path = Path("geometry/apollo_3d.step")
+    step_path = Path(config.step_file)
     if not step_path.exists():
         print(f"  ERROR: STEP file not found at {step_path}")
         return 1
@@ -268,15 +268,23 @@ def run_mesh3d_stage(config: CaseConfig) -> int:
     # Create 3D mesh config
     mesh_config = Mesh3DConfig.for_tier(config.mesh_tier)
 
+    # Get body geometry parameters for domain sizing
+    body_config = config.preset_fn()
+    R_nose = body_config.R_nose
+    body_diameter = 2.0 * body_config.max_radius
+
     mesh_dir = Path(config.output_dir) / "mesh"
     mesh_dir.mkdir(parents=True, exist_ok=True)
     mesh_path = mesh_dir / f"{config.name}_3d.su2"
 
     print(f"  Tier: {config.mesh_tier}")
-    print(f"  Farfield radius: {mesh_config.farfield_radius_factor}x body length")
+    print(f"  R_nose: {R_nose:.3f} m, Body diameter: {body_diameter:.3f} m")
+    print(f"  Upstream: {mesh_config.upstream_factor}x R_nose")
+    print(f"  Downstream: {mesh_config.downstream_factor}x body diameter")
+    print(f"  Radius: {mesh_config.lateral_factor}x R_nose")
 
     try:
-        generate_3d_mesh(geometry, mesh_config, mesh_path)
+        generate_3d_mesh(geometry, mesh_config, mesh_path, R_nose=R_nose, body_diameter=body_diameter)
     except (RuntimeError, OSError) as exc:
         print(f"  3D Mesh generation FAILED: {exc}")
         return 1
