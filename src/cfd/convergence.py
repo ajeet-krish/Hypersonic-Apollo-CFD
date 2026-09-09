@@ -52,7 +52,7 @@ class ConvergenceStage:
     linear_solver_error: float = 1e-4
     linear_solver_iter: int = 50
     cfl_adapt_min: float = 0.0005
-    cfl_adapt_max: float = 0.05
+    cfl_adapt_max: float = 1.0  # Must be >= 1.0 for SU2 v8.4
     cfl_adapt_decrease: float = 0.5
     cfl_adapt_increase: float = 1.2
 
@@ -348,7 +348,7 @@ class ConvergenceStrategy:
         """Create a convergence strategy optimized for 3D meshes.
 
         3D meshes are 10-50x larger than 2D, requiring:
-        - Lower CFL (0.0005-0.002) for stability
+        - Conservative CFL (0.001-0.01) for stability
         - More iterations per stage
         - FGMRES linear solver (better for 3D systems)
         - Tighter linear solver tolerance
@@ -374,8 +374,8 @@ class ConvergenceStrategy:
         for i, mach_val in enumerate(mach_numbers):
             is_last = i == len(mach_numbers) - 1
 
-            # Conservative CFL for 3D (lower than 2D)
-            cfl_val = 0.0005 + 0.0003 * i
+            # CFL progression: 0.001 -> 0.003 -> 0.005 -> 0.010
+            cfl_val = 0.001 + 0.002 * i
 
             # More iterations for 3D (larger mesh)
             iters = 10000 if is_last else 5000 + 2000 * i
@@ -391,9 +391,9 @@ class ConvergenceStrategy:
                 linear_solver_error=1e-6,  # Tighter tolerance for 3D
                 linear_solver_iter=100,  # More iterations for 3D
                 cfl_adapt_min=0.0001,
-                cfl_adapt_max=0.5,  # Lower max CFL for 3D stability
+                cfl_adapt_max=1.0,  # Must be >= 1.0 for SU2 v8.4
                 cfl_adapt_decrease=0.5,
-                cfl_adapt_increase=1.1,  # More conservative growth
+                cfl_adapt_increase=1.2,  # More aggressive growth when stable
             )
             stages.append(stage)
 

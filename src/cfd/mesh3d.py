@@ -1,7 +1,17 @@
 """3D cylindrical wind tunnel mesh generation for hypersonic blunt body CFD.
 
-Generates tetrahedral meshes with prismatic boundary layers in a
-cylindrical domain around the body geometry using Gmsh OpenCASCADE.
+Generates tetrahedral meshes in a cylindrical domain around the body
+geometry using Gmsh OpenCASCADE. Features:
+- Boolean subtraction: cylinder - body = fluid domain
+- Distance-based size field refinement near body wall
+- Shock refinement at Billig standoff distance
+- Wake refinement downstream of body
+- Junction refinement at sphere-cone junction
+- Post-generation optimization (Netgen + Laplace3D)
+
+Note: Prismatic boundary layer requires extrudeBoundaryLayer API
+(not yet implemented). Current implementation uses tetrahedral
+elements with distance-based refinement near the body wall.
 """
 from __future__ import annotations
 
@@ -174,25 +184,9 @@ def generate_3d_mesh(
 
         gmsh.model.geo.synchronize()
 
-        # --- Boundary layer (prismatic layers at body wall) ---
-        if body_surfs_after and mesh_config.boundary_layers > 0:
-            print(f"  Adding {mesh_config.boundary_layers} prismatic BL layers...")
-            bl_tag = 1
-            gmsh.model.mesh.field.add("BoundaryLayer", bl_tag)
-
-            # Set BL parameters
-            gmsh.model.mesh.field.setNumbers(bl_tag, "CurvesList", [])
-            gmsh.model.mesh.field.setNumbers(bl_tag, "SurfacesList", body_surfs_after)
-            gmsh.model.mesh.field.setNumber(bl_tag, "Quads", 0)  # Triangles in BL
-            gmsh.model.mesh.field.setNumber(bl_tag, "NbLayers", mesh_config.boundary_layers)
-            gmsh.model.mesh.field.setNumber(bl_tag, "hfar", mesh_config.max_element_size * 0.5)
-            gmsh.model.mesh.field.setNumber(bl_tag, "hwall_n", mesh_config.effective_first_cell_height(4.694))
-            gmsh.model.mesh.field.setNumber(bl_tag, "thickness", mesh_config.max_element_size * 0.3)
-            gmsh.model.mesh.field.setNumber(bl_tag, "ratio", mesh_config.bl_growth_ratio)
-            gmsh.model.mesh.field.setNumber(bl_tag, "FontSize", 2)
-            gmsh.model.mesh.field.setAsBoundaryLayer(bl_tag)
-
         # --- Size fields ---
+        # Note: BoundaryLayer requires extrudeBoundaryLayer API (more complex)
+        # For now, use size fields to approximate BL refinement near body
         # Distance field from body surfaces for smooth size transition
         distance_tag = 100
         gmsh.model.mesh.field.add("Distance", distance_tag)
@@ -202,10 +196,11 @@ def generate_3d_mesh(
         # Shock refinement: Ball field at expected shock location
         shock_tag = 400
         gmsh.model.mesh.field.add("Ball", shock_tag)
-        # Shock standoff: delta/R = 0.143 * exp(3.24/M^2) for M=15.6
+        # Shock standoff: delta/R = 0.143 * exp(3.24/M^2) (Billig correlation)
         import math
-        standoff_ratio = 0.143 * math.exp(3.24 / (15.6 ** 2))
-        shock_x = bbox.x_min + standoff_ratio * R_nose_mm
+        mach = 15.6  # Default, should be passed as parameter
+        standoff_ratio = 0.143 * math.exp(3.24 / (mach ** 2))
+        shock_x = bbox.x_min - standoff_ratio * R_nose_mm  # Upstream of nose
         gmsh.model.mesh.field.setNumber(shock_tag, "XCenter", shock_x)
         gmsh.model.mesh.field.setNumber(shock_tag, "YCenter", 0.0)
         gmsh.model.mesh.field.setNumber(shock_tag, "ZCenter", 0.0)
@@ -225,15 +220,29 @@ def generate_3d_mesh(
         gmsh.model.mesh.field.setNumber(wake_tag, "VIn", mesh_config.min_element_size * 3)
         gmsh.model.mesh.field.setNumber(wake_tag, "VOut", mesh_config.max_element_size * 0.7)
 
+        # Junction refinement: Ball field at sphere-cone junction
+        junc_tag = 450
+        gmsh.model.mesh.field.add("Ball", junc_tag)
+        junc_x = bbox.x_min + R_nose_mm  # Approximate junction location
+        gmsh.model.mesh.field.setNumber(junc_tag, "XCenter", junc_x)
+        gmsh.model.mesh.field.setNumber(junc_tag, "YCenter", 0.0)
+        gmsh.model.mesh.field.setNumber(junc_tag, "ZCenter", 0.0)
+        gmsh.model.mesh.field.setNumber(junc_tag, "VIn", mesh_config.min_element_size * 1.5)
+        gmsh.model.mesh.field.setNumber(junc_tag, "VOut", mesh_config.max_element_size * 0.3)
+        gmsh.model.mesh.field.setNumber(junc_tag, "Radius", 1.5 * R_nose_mm)
+
         # MathEval: ramp from min_size near body to max_size in farfield
         size_tag = 200
         gmsh.model.mesh.field.add("MathEval", size_tag)
+        # Exponential ramp for smooth size transitions (matching 2D pattern)
+        min_sz = mesh_config.min_element_size
+        max_sz = mesh_config.max_element_size
+        ramp_dist = radius  # Use cylinder radius as ramp distance
         gmsh.model.mesh.field.setString(
             size_tag,
             "F",
-            f"Max({mesh_config.min_element_size}, "
-            f"Min({mesh_config.max_element_size}, "
-            f"{mesh_config.min_element_size} + F{distance_tag} * 0.1))",
+            f"{min_sz} * Exp(Min(F{distance_tag}, {ramp_dist}) "
+            f"* Log({max_sz}/{min_sz}) / {ramp_dist})",
         )
 
         # Background mesh (constant size in farfield)
@@ -245,15 +254,21 @@ def generate_3d_mesh(
         # Combine fields with Min
         min_tag = 999
         gmsh.model.mesh.field.add("Min", min_tag)
-        gmsh.model.mesh.field.setNumbers(min_tag, "FieldsList", [size_tag, shock_tag, wake_tag, bg_tag])
+        gmsh.model.mesh.field.setNumbers(min_tag, "FieldsList", [size_tag, shock_tag, wake_tag, junc_tag, bg_tag])
         gmsh.model.mesh.field.setAsBackgroundMesh(min_tag)
 
         # --- Mesh generation ---
         print("  Generating 3D tetrahedral mesh...")
         gmsh.option.setNumber("Mesh.Algorithm3D", 1)  # Delaunay
-        gmsh.option.setNumber("Mesh.Smoothing", 10)
+        gmsh.option.setNumber("Mesh.Smoothing", 50)  # Increased from 10
         gmsh.option.setNumber("Mesh.Optimize", 1)
+        gmsh.option.setNumber("Mesh.OptimizeThreshold", 0.3)  # Optimize cells with quality < 0.3
         gmsh.model.mesh.generate(3)
+
+        # Post-generation optimization passes
+        print("  Running post-generation optimization...")
+        gmsh.model.mesh.optimize("Netgen")  # Optimize worst cells
+        gmsh.model.mesh.optimize("Laplace3D")  # Smooth node positions
 
         # --- Export ---
         gmsh.write(str(output_path))
