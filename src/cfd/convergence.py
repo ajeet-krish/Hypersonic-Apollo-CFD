@@ -349,13 +349,20 @@ class ConvergenceStrategy:
 
         3D meshes are 10-50x larger than 2D, requiring:
         - Conservative CFL (0.001-0.01) for stability
-        - More iterations per stage
+        - Higher iteration counts per stage (8k, 12k, 16k, 25k for 4-stage)
         - FGMRES linear solver (better for 3D systems)
-        - Tighter linear solver tolerance
+        - Tighter linear solver tolerance (1e-6)
+
+        For the default 4-stage ramp (M=2 -> M=5 -> M=10 -> target):
+            Stage 1 (M=2.0):   8,000 iterations
+            Stage 2 (M=5.0):  12,000 iterations
+            Stage 3 (M=10.0): 16,000 iterations
+            Stage 4 (target): 25,000 iterations
+            Total: 61,000 iterations
 
         Args:
             target_mach: Target freestream Mach number.
-            n_stages: Number of stages (minimum 2).
+            n_stages: Number of stages (minimum 2, default 4).
 
         Returns:
             ConvergenceStrategy optimized for 3D meshes.
@@ -370,15 +377,22 @@ class ConvergenceStrategy:
             mach_val = start_mach + frac * (target_mach - start_mach)
             mach_numbers.append(mach_val)
 
+        # Iteration counts per stage for 3D (higher than 2D for larger meshes)
+        # Default 4-stage: 8000, 12000, 16000, 25000 = 61000 total
+        three_d_iterations = [8000, 12000, 16000, 25000]
+
         stages = []
         for i, mach_val in enumerate(mach_numbers):
-            is_last = i == len(mach_numbers) - 1
-
             # CFL progression: 0.001 -> 0.003 -> 0.005 -> 0.010
             cfl_val = 0.001 + 0.002 * i
 
-            # More iterations for 3D (larger mesh)
-            iters = 10000 if is_last else 5000 + 2000 * i
+            # Use explicit iteration counts for known stage counts,
+            # otherwise scale linearly for custom stage counts
+            if n_stages <= len(three_d_iterations):
+                iters = three_d_iterations[i]
+            else:
+                # For custom stage counts, scale from 8k to 25k linearly
+                iters = int(8000 + (25000 - 8000) * i / (n_stages - 1))
 
             stage = ConvergenceStage(
                 name=f"Stage {i + 1}: M={mach_val:.1f}",

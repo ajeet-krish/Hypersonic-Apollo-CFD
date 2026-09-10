@@ -18,7 +18,9 @@ class PipelineStage(Enum):
     MESH = "mesh"
     MESH3D = "mesh3d"
     SU2 = "su2"
+    SU2_3D = "su2_3d"
     POSTPROCESS = "postprocess"
+    POSTPROCESS_3D = "postprocess_3d"
     VALIDATION = "validation"
     GCI = "gci"
     SWEEP = "sweep"
@@ -76,6 +78,12 @@ class CaseConfig:
         """SU2 output directory, organized by Mach number."""
         mach_str = f"m{self.mach}".replace(".", "_")
         return f"output/{self.name}/su2/{mach_str}"
+
+    @property
+    def su2_3d_dir(self) -> str:
+        """SU2 3D output directory, organized by Mach number."""
+        mach_str = f"m{self.mach}".replace(".", "_")
+        return f"output/{self.name}/su2_3d/{mach_str}"
 
     @property
     def geometry_dir(self) -> str:

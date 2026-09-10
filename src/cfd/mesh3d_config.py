@@ -22,6 +22,7 @@ class Mesh3DConfig:
         min_element_size: Minimum element size near body (m).
         max_element_size: Maximum element size in farfield (m).
         use_symmetry: Use y=0 symmetry plane for 0 deg AoA.
+        mach: Freestream Mach number for shock standoff sizing.
     """
 
     mesh_tier: str = "draft"
@@ -34,6 +35,7 @@ class Mesh3DConfig:
     min_element_size: float = 0.005
     max_element_size: float = 2.0
     use_symmetry: bool = True
+    mach: float = 15.6
 
     def __post_init__(self) -> None:
         """Validate configuration values after initialization."""
@@ -90,10 +92,10 @@ class Mesh3DConfig:
     def for_tier(cls, tier: str, **overrides: object) -> "Mesh3DConfig":
         """Create Mesh3DConfig scaled for the given refinement tier.
 
-        Tier targets (approximate 3D cell counts):
-            draft:    ~2-3M cells
-            standard: ~10-15M cells
-            high:     ~40-50M cells
+        Tier targets (approximate 3D cell counts, sizes in mm):
+            draft:    ~2-5M cells   (min=50mm, max=2000mm)
+            standard: ~10-15M cells (min=20mm, max=1000mm)
+            high:     ~30-50M cells (min=5mm, max=500mm)
 
         Args:
             tier: Refinement tier (draft, standard, high).
@@ -104,18 +106,18 @@ class Mesh3DConfig:
         """
         tier_params: dict[str, dict[str, object]] = {
             "draft": {
-                "min_element_size": 0.05,
-                "max_element_size": 5.0,
+                "min_element_size": 50.0,    # mm - coarse, ~2-5M elements
+                "max_element_size": 2000.0,  # mm
                 "boundary_layers": 20,
             },
             "standard": {
-                "min_element_size": 0.01,
-                "max_element_size": 2.0,
+                "min_element_size": 20.0,    # mm - moderate, ~10-15M elements
+                "max_element_size": 1000.0,  # mm
                 "boundary_layers": 40,
             },
             "high": {
-                "min_element_size": 0.005,
-                "max_element_size": 1.0,
+                "min_element_size": 5.0,     # mm - fine, ~30-50M elements
+                "max_element_size": 500.0,   # mm
                 "boundary_layers": 60,
             },
         }

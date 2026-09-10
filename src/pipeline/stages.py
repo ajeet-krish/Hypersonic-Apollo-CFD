@@ -284,12 +284,210 @@ def run_mesh3d_stage(config: CaseConfig) -> int:
     print(f"  Radius: {mesh_config.lateral_factor}x R_nose")
 
     try:
-        generate_3d_mesh(geometry, mesh_config, mesh_path, R_nose=R_nose, body_diameter=body_diameter)
+        # Generate body contour for fallback if boolean subtract fails
+        from geometry.blunt_body import generate_contour
+        x_contour, r_contour = generate_contour(body_config)
+        # Convert from meters to millimeters (STEP file units)
+        x_contour_mm = x_contour * 1000.0
+        r_contour_mm = r_contour * 1000.0
+
+        generate_3d_mesh(
+            geometry, mesh_config, mesh_path,
+            R_nose=R_nose, body_diameter=body_diameter,
+            contour_x=x_contour_mm, contour_r=r_contour_mm,
+        )
     except (RuntimeError, OSError) as exc:
         print(f"  3D Mesh generation FAILED: {exc}")
         return 1
 
     print(f"  Mesh: {mesh_path} ({mesh_path.stat().st_size:,} bytes)")
+
+    return 0
+
+
+def run_su2_3d_stage(config: CaseConfig) -> int:
+    """Run SU2 CFD simulation for a 3D cylindrical wind tunnel mesh.
+
+    Uses ConvergenceStrategy.for_3d_mach() for conservative settings
+    appropriate for large 3D tetrahedral meshes. Sets AXISYMMETRIC=NO
+    and validates 3D boundary markers before running.
+
+    Produces:
+        - output/{name}/su2_3d/{mach}/config.cfg: SU2 configuration file
+        - output/{name}/su2_3d/{mach}/history.csv: convergence history
+        - output/{name}/su2_3d/{mach}/flow.vtu: solution field data
+        - output/{name}/su2_3d/{mach}/results.json: summary of results
+        - docs/assets/images/{name}/convergence_3d.png: convergence plot
+
+    Returns:
+        0 on success, 1 on failure.
+    """
+    print(f"\n[{config.label}] SU2 3D stage (strategy={config.su2_strategy})")
+
+    from cfd.config import SU2HypersonicConfig
+    from cfd.convergence import ConvergenceStrategy
+    from cfd.mesh3d_quality import check_mesh_quality_3d
+    from cfd.solver import SU2Solver
+    from physics.atmosphere import standard_atmosphere
+
+    # Compute atmosphere for freestream conditions
+    atm = standard_atmosphere(config.altitude)
+    V_inf = atm.speed_of_sound * config.mach
+    reynolds_number = atm.density * V_inf * 1.0 / atm.dynamic_viscosity
+
+    # Base SU2 config, then convert to 3D (AXISYMMETRIC=NO)
+    su2_config = SU2HypersonicConfig(
+        mach=config.mach,
+        freestream_pressure=atm.pressure,
+        freestream_temperature=atm.temperature,
+        freestream_density=atm.density,
+        freestream_viscosity=atm.dynamic_viscosity,
+        reynolds_number=reynolds_number,
+        cfl_number=config.su2_cfl,
+        iterations=config.su2_iterations,
+    )
+    su2_config = su2_config.as_3d()
+    print(f"  3D mode: AXISYMMETRIC=NO")
+
+    # Validate 3D boundary markers
+    errors = su2_config.validate_3d_markers()
+    if errors:
+        print(f"  ERROR: 3D marker validation failed:")
+        for err in errors:
+            print(f"    - {err}")
+        return 1
+    print(f"  3D markers validated: OK")
+
+    # Output directory (per-Mach subdirectory under su2_3d/)
+    su2_3d_dir = Path(config.su2_3d_dir)
+    su2_3d_dir.mkdir(parents=True, exist_ok=True)
+
+    # Mesh file from Phase 2 (3D mesh)
+    mesh_path = Path(config.output_dir) / "mesh" / f"{config.name}_3d.su2"
+    if not mesh_path.exists():
+        print(f"  ERROR: 3D mesh not found at {mesh_path}. Run mesh3d stage first.")
+        return 1
+
+    # Report mesh info
+    quality = check_mesh_quality_3d(mesh_path)
+    print(f"  Mesh: {mesh_path} ({mesh_path.stat().st_size:,} bytes)")
+    print(f"    Cells: {quality['n_cells']:,}")
+    print(f"    Mean quality: {quality['mean_quality']:.4f}")
+    print(f"    Bad cells: {quality['pct_bad_cells']:.1f}%")
+
+    # Copy mesh to SU2 working directory (SU2 looks for mesh in cwd)
+    mesh_dest = su2_3d_dir / mesh_path.name
+    if not mesh_dest.exists() or mesh_path.stat().st_size != mesh_dest.stat().st_size:
+        import shutil
+        shutil.copy2(mesh_path, mesh_dest)
+    mesh_filename = mesh_path.name
+
+    solver = SU2Solver()
+
+    # Use 3D-optimized convergence strategy
+    if config.convergence_strategy:
+        strategy = config.convergence_strategy
+    else:
+        strategy = ConvergenceStrategy.for_3d_mach(config.mach, n_stages=4)
+    print(f"  Strategy: {len(strategy.stages)} stages (3D-optimized)")
+    for i, stage in enumerate(strategy.stages):
+        print(f"    {i + 1}. {stage.name} (M={stage.mach}, "
+              f"CFL={stage.cfl}, iters={stage.iterations})")
+    results = solver.run_stages(strategy, su2_config, su2_3d_dir, mesh_filename)
+    return _report_and_save_3d(results, su2_config, su2_3d_dir, config)
+
+
+def _report_and_save_3d(
+    results: SU2Results,
+    su2_config: SU2HypersonicConfig,
+    su2_dir: Path,
+    config: CaseConfig,
+) -> int:
+    """Save SU2 3D results JSON and convergence plot.
+
+    Args:
+        results: Parsed SU2 results.
+        su2_config: SU2 configuration used.
+        su2_dir: SU2 output directory.
+        config: Pipeline case config.
+
+    Returns:
+        0 on success, 1 if not converged.
+    """
+    from viz.convergence import plot_convergence
+
+    results_dict = {
+        "case": config.name,
+        "mach": config.mach,
+        "altitude_m": config.altitude,
+        "strategy": config.su2_strategy,
+        "mode": "3d",
+        "converged": results.converged,
+        "iterations": results.iterations,
+        "residual_drop": round(results.residual_drop, 4),
+        "final_residual_log10": round(results.final_residual, 4),
+        "stagnation_pressure_Pa": (
+            round(results.stagnation_pressure, 2)
+            if results.stagnation_pressure is not None else None
+        ),
+        "max_mach": (
+            round(results.max_mach, 4)
+            if results.max_mach is not None else None
+        ),
+        "wall_temperature_K": su2_config.wall_temperature,
+        "cfl_number": su2_config.cfl_number,
+    }
+    results_path = su2_dir / "results.json"
+    with open(results_path, "w") as f:
+        json.dump(results_dict, f, indent=2)
+    print(f"  Results: {results_path}")
+
+    # Plot convergence
+    images_dir = Path(config.images_dir)
+    images_dir.mkdir(parents=True, exist_ok=True)
+    if results.history:
+        plot_path = plot_convergence(results.history, images_dir / "convergence_3d.png")
+        print(f"  Convergence plot: {plot_path}")
+
+    # Print summary
+    status = "CONVERGED" if results.converged else "DID NOT CONVERGE"
+    print(f"\n  === Final Status (3D): {status} ===")
+    print(f"  Iterations: {results.iterations}")
+    print(f"  Residual drop: {results.residual_drop:.2f} orders")
+    print(f"  Final rms[Rho]: 10^{results.final_residual:.2f}")
+    if results.stagnation_pressure is not None:
+        print(f"  Stagnation pressure: {results.stagnation_pressure:.1f} Pa")
+    if results.max_mach is not None:
+        print(f"  Max Mach: {results.max_mach:.2f}")
+
+    return 0 if results.converged else 1
+
+
+def run_postprocess3d_stage(config: CaseConfig) -> int:
+    """Post-process SU2 3D solution (placeholder).
+
+    Reads from output/{name}/su2_3d/{mach}/flow.vtu.
+    Full 3D post-processing (slices, 3D contours, surface extraction)
+    will be implemented in Phase 4.
+
+    Returns:
+        0 on success (placeholder), 1 if VTU not found.
+    """
+    print(f"\n[{config.label}] 3D Post-processing stage (Phase 4 placeholder)")
+
+    # Check that the VTU file exists
+    vtu_path = Path(config.su2_3d_dir) / "flow.vtu"
+    if not vtu_path.exists():
+        print(f"  ERROR: VTU file not found at {vtu_path}. Run su2_3d stage first.")
+        return 1
+
+    print(f"  VTU found: {vtu_path} ({vtu_path.stat().st_size:,} bytes)")
+    print(f"  3D post-processing will be implemented in Phase 4.")
+    print(f"  Planned features:")
+    print(f"    - Midplane slices (XY, XZ)")
+    print(f"    - 3D volumetric contours (Mach, pressure, temperature)")
+    print(f"    - Surface heat flux extraction from 3D wall faces")
+    print(f"    - Shock surface isosurface visualization")
 
     return 0
 
@@ -1065,7 +1263,9 @@ STAGE_FUNCTIONS: dict[PipelineStage, Callable[[CaseConfig], int]] = {
     PipelineStage.MESH: run_mesh_stage,
     PipelineStage.MESH3D: run_mesh3d_stage,
     PipelineStage.SU2: run_su2_stage,
+    PipelineStage.SU2_3D: run_su2_3d_stage,
     PipelineStage.POSTPROCESS: run_postprocess_stage,
+    PipelineStage.POSTPROCESS_3D: run_postprocess3d_stage,
     PipelineStage.VALIDATION: run_validation_stage,
     PipelineStage.GCI: run_gci_stage,
     PipelineStage.APOLLO: run_apollo_stage,

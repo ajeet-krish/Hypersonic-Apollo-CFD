@@ -171,8 +171,20 @@ TIME_DISCRE_TURB= EULER_IMPLICIT"""
             bc_parts.append(sym_line)
         bc_section = "\n".join(bc_parts)
 
-        config_content = f"""% ------- Hypersonic Blunt Body Aerothermodynamics - {self.solver} Config --------
-% Axisymmetric {self.solver}, M={self.mach}, Alt=30 km
+        # Build 3D vs axisymmetric header comment
+        if self.axisymmetric:
+            header_comment = (
+                f"% ------- Hypersonic Blunt Body Aerothermodynamics - {self.solver} Config --------\n"
+                f"% Axisymmetric {self.solver}, M={self.mach}, Alt=30 km"
+            )
+        else:
+            header_comment = (
+                f"% ------- Hypersonic Blunt Body Aerothermodynamics - {self.solver} Config --------\n"
+                f"% 3D {self.solver}, M={self.mach}, Alt=30 km\n"
+                f"% Cylindrical wind tunnel configuration (AXISYMMETRIC=NO)"
+            )
+
+        config_content = f"""{header_comment}
 
 % -------------------- SOLVER CONFIGURATION --------------------
 SOLVER= {self.solver}
@@ -421,6 +433,46 @@ MESH_FORMAT= SU2
         new = copy.deepcopy(self)
         new.axisymmetric = False
         return new
+
+    def validate_3d_markers(self) -> list[str]:
+        """Validate that required markers are configured for 3D simulation.
+
+        Checks that the config has the boundary markers required for a
+        cylindrical wind tunnel 3D setup:
+        - body marker (MARKER_ISOTHERMAL for RANS, MARKER_EULER for EULER)
+        - farfield marker (MARKER_FAR)
+        - Optional sym marker (MARKER_SYM) for 0 AoA symmetry plane
+
+        Returns:
+            List of validation error messages. Empty list means valid.
+
+        Raises:
+            ValueError: If axisymmetric is True (not a 3D config).
+        """
+        if self.axisymmetric:
+            raise ValueError(
+                "validate_3d_markers() called on axisymmetric config. "
+                "Use as_3d() first to set AXISYMMETRIC=NO."
+            )
+
+        errors: list[str] = []
+
+        # Required: body marker
+        if not self.wall_marker:
+            errors.append("Missing body marker (wall_marker is empty)")
+
+        # Required: farfield marker
+        if not self.farfield_marker:
+            errors.append("Missing farfield marker (farfield_marker is empty)")
+
+        # Optional: sym marker for 0 AoA
+        if self.aoa != 0.0 and self.sym_marker:
+            errors.append(
+                f"AoA={self.aoa} is non-zero but sym_marker='{self.sym_marker}' "
+                "is set. Symmetry plane should only be used at 0 AoA."
+            )
+
+        return errors
 
 
 def get_su2_binary() -> Path:

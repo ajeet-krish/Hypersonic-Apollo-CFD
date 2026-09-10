@@ -63,6 +63,12 @@ def main() -> int:
         help="Show entire body (both halves), not axisymmetric half",
     )
     parser.add_argument(
+        "--3d",
+        dest="three_d",
+        action="store_true",
+        help="Enable 3D cylindrical wind tunnel simulation",
+    )
+    parser.add_argument(
         "--tier",
         choices=["draft", "standard", "high"],
         default="standard",
@@ -120,6 +126,7 @@ def main() -> int:
         altitude=args.altitude,
         aoa=args.aoa,
         full2d=args.full2d,
+        is_3d=args.three_d,
         mesh_tier=args.tier,
         su2_iterations=args.iterations,
         su2_cfl=args.cfl,
@@ -131,6 +138,9 @@ def main() -> int:
 
     if args.step:
         stages = [PipelineStage(args.step)]
+    elif args.three_d:
+        # 3D pipeline: mesh3d -> su2_3d -> postprocess_3d
+        stages = [PipelineStage.MESH3D, PipelineStage.SU2_3D, PipelineStage.POSTPROCESS_3D]
     else:
         stages = None
 

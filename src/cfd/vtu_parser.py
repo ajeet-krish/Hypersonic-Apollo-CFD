@@ -313,3 +313,58 @@ def extract_surface_heat_flux(
         if key in data.point_data:
             return data.point_data[key]
     return None
+
+
+def extract_symmetry_plane_slice(
+    data: VTUData,
+    plane_y: float = 0.0,
+    tolerance: float = 0.001,
+) -> VTUData:
+    """Extract nodes near a symmetry plane (y=plane_y).
+
+    Returns a new VTUData with only nodes where |y - plane_y| < tolerance.
+    The y-coordinate is removed from the coordinates (N x 2 output).
+
+    Args:
+        data: 3D VTU data with N x 3 coordinates.
+        plane_y: Y-coordinate of the symmetry plane.
+        tolerance: Maximum distance from plane to include a node.
+
+    Returns:
+        VTUData with filtered nodes and N x 2 coordinates (x, z).
+
+    Raises:
+        ValueError: If no nodes found within tolerance or data is not 3D.
+    """
+    coords = data.coordinates
+    if coords.shape[1] < 2:
+        raise ValueError(
+            f"VTU data must have at least 2D coordinates, got shape {coords.shape}"
+        )
+
+    y = coords[:, 1]
+    mask = np.abs(y - plane_y) < tolerance
+
+    if not mask.any():
+        raise ValueError(
+            f"No nodes found within tolerance {tolerance} of plane y={plane_y}"
+        )
+
+    # Drop y coordinate, keep x and z
+    if coords.shape[1] >= 3:
+        coords_2d = np.column_stack([coords[mask, 0], coords[mask, 2]])
+    else:
+        coords_2d = coords[mask]
+
+    filtered_point_data: dict[str, np.ndarray] = {
+        key: arr[mask] for key, arr in data.point_data.items()
+    }
+    filtered_cell_data: dict[str, np.ndarray] = {
+        key: arr[mask] for key, arr in data.cell_data.items()
+    }
+
+    return VTUData(
+        coordinates=coords_2d,
+        point_data=filtered_point_data,
+        cell_data=filtered_cell_data,
+    )

@@ -25,7 +25,7 @@ class TestConvergenceStage:
         assert stage.linear_solver_error == pytest.approx(1e-4)
         assert stage.linear_solver_iter == 50
         assert stage.cfl_adapt_min == pytest.approx(0.0005)
-        assert stage.cfl_adapt_max == pytest.approx(0.05)
+        assert stage.cfl_adapt_max == pytest.approx(1.0)
         assert stage.cfl_adapt_decrease == pytest.approx(0.5)
         assert stage.cfl_adapt_increase == pytest.approx(1.2)
 
