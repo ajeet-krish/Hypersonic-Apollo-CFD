@@ -9,7 +9,6 @@ A computational fluid dynamics (CFD) investigation of hypersonic flow over the A
 - [Apollo Command Module](#apollo-command-module)
 - [Geometry](#geometry)
 - [Simulation Results](#simulation-results)
-- [Full2D Flow Field Visualization](#full2d-flow-field-visualization)
 - [Mach 15.6 Re-entry](#mach-156-re-entry)
 - [Results Discussion](#results-discussion)
 - [Methodology](#methodology)
@@ -98,36 +97,6 @@ Two mesh modes are supported:
 ---
 
 ## Simulation Results
-
-*The contour plots below show axisymmetric and full2D SU2 results at M=15.6. For high-fidelity ParaView visualizations of the full2D flow field, see the [Full2D Flow Field Visualization](#full2d-flow-field-visualization) section.*
-
-### Mach Number Distribution
-
-| Axisymmetric (M=15.6) | Full2D (M=15.6) |
-|----------------------|-----------------|
-| ![Mach contour](docs/assets/images/apollo-cm/mach_contour_new.png) | ![Mach full2d](docs/assets/images/apollo-cm/mach_contour_full2d.png) |
-
-The bow shock structure is clearly visible at M=15.6. Freestream flow at Mach 15.6 decelerates through the bow shock to subsonic speeds behind the shock. The shock standoff distance is consistent with the Billig correlation.
-
-### Pressure Distribution
-
-| Axisymmetric (M=15.6) | Full2D (M=15.6) |
-|----------------------|-----------------|
-| ![Pressure contour](docs/assets/images/apollo-cm/pressure_contour_new.png) | ![Pressure full2d](docs/assets/images/apollo-cm/pressure_contour_full2d.png) |
-
-Stagnation pressure reaches 558 kPa at M=15.6, with the highest pressure concentrated at the nose stagnation point. The pressure ratio across the shock follows the Rankine-Hugoniot relation.
-
-### Temperature Distribution
-
-| Axisymmetric (M=15.6) | Full2D (M=15.6) |
-|----------------------|-----------------|
-| ![Temperature contour](docs/assets/images/apollo-cm/temperature_contour_new.png) | ![Temperature full2d](docs/assets/images/apollo-cm/temperature_contour_full2d.png) |
-
-Stagnation temperatures reach ~60,000 K under perfect gas assumptions. Real gas effects (dissociation, ionization) would reduce this value in practice.
-
----
-
-## Full2D Flow Field Visualization
 
 High-fidelity flow field visualizations rendered in ParaView from the full2D SU2 solution at M=15.6 (AS-202 re-entry conditions). These plots reveal the complete aerothermodynamic structure of hypersonic flow over the Apollo Command Module, including the bow shock, shock layer, thermal boundary layer, and wake topology.
 
