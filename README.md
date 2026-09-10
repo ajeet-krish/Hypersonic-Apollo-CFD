@@ -38,8 +38,8 @@ A computational fluid dynamics (CFD) investigation of hypersonic flow over the A
 
 The Apollo CM features a spherically-blunted cone with a concave heat shield. The heat shield sphere (R=4.694 m) curves inward from the nose tip, transitioning through a toroidal shoulder fillet (R=0.196 m) to a 33-degree conical afterbody. The base edge is rounded with a fillet (R=0.231 m). All dimensions are verified against DXF source geometry.
 
-| 2D Annotated Profile | 3D Revolved Surface |
-|----------------------|---------------------|
+| 2D Dimensions | 3D Geometry |
+|---------------|-------------|
 | ![Apollo CM 2D](docs/assets/images/apollo-cm/geometry.png) | ![Apollo CM 3D](docs/assets/images/apollo-cm/body_3d.png) |
 
 ### Simulation Conditions
