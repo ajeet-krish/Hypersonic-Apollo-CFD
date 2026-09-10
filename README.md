@@ -9,6 +9,7 @@ A computational fluid dynamics (CFD) investigation of hypersonic flow over the A
 - [Apollo Command Module](#apollo-command-module)
 - [Geometry](#geometry)
 - [Simulation Results](#simulation-results)
+- [Full2D Flow Field Visualization](#full2d-flow-field-visualization)
 - [Mach 15.6 Re-entry](#mach-156-re-entry)
 - [Results Discussion](#results-discussion)
 - [Methodology](#methodology)
@@ -98,6 +99,8 @@ Two mesh modes are supported:
 
 ## Simulation Results
 
+*The contour plots below show axisymmetric and full2D SU2 results at M=15.6. For high-fidelity ParaView visualizations of the full2D flow field, see the [Full2D Flow Field Visualization](#full2d-flow-field-visualization) section.*
+
 ### Mach Number Distribution
 
 | Axisymmetric (M=15.6) | Full2D (M=15.6) |
@@ -121,6 +124,44 @@ Stagnation pressure reaches 558 kPa at M=15.6, with the highest pressure concent
 | ![Temperature contour](docs/assets/images/apollo-cm/temperature_contour_new.png) | ![Temperature full2d](docs/assets/images/apollo-cm/temperature_contour_full2d.png) |
 
 Stagnation temperatures reach ~60,000 K under perfect gas assumptions. Real gas effects (dissociation, ionization) would reduce this value in practice.
+
+---
+
+## Full2D Flow Field Visualization
+
+High-fidelity flow field visualizations rendered in ParaView from the full2D SU2 solution at M=15.6 (AS-202 re-entry conditions). These plots reveal the complete aerothermodynamic structure of hypersonic flow over the Apollo Command Module, including the bow shock, shock layer, thermal boundary layer, and wake topology.
+
+### Mach Number Contour
+
+![Mach Number Contour](docs/assets/images/paraview_plots/mach_contour_apollo.png)
+
+The Mach number contour captures the defining feature of blunt body hypersonic aerodynamics: the detached bow shock. Freestream flow at M=15.6 approaches the heat shield and decelerates abruptly across the shock discontinuity, dropping to subsonic speeds (M < 1) in the stagnation region immediately behind the shock. The shock structure exhibits the characteristic "fish-eye" pattern of a blunt body bow shock, with the shock standing off from the nose at a standoff distance of approximately 0.8R_nose, consistent with the Billig correlation (delta/R = 0.143 * exp(3.24/M^2)).
+
+Behind the shock, the subsonic region is confined to the shock layer near the stagnation point. As the flow expands around the shoulder fillet, it re-accelerates through the sonic point (M=1) and reaches supersonic speeds along the conical afterbody. The sharp Mach number gradient across the shock is a direct manifestation of the Rankine-Hugoniot jump conditions, with the post-shock Mach number determined by the normal component of the incoming flow.
+
+### Pressure Contour
+
+![Pressure Contour](docs/assets/images/paraview_plots/pressure_contour_apollo.png)
+
+The pressure distribution follows the modified Newtonian theory (Cp = Cp_max * sin^2(theta)), with the stagnation pressure peak of approximately 360 kPa concentrated at the nose stagnation point. The colorbar confirms this peak value, which represents the total pressure recovery across the bow shock at M=15.6. The pressure ratio across the shock (p_2/p_1 approximately 8,600) is consistent with the Rankine-Hugoniot relation for a gamma=1.4 gas at this Mach number.
+
+The rapid pressure drop across the shock layer reflects the conversion of kinetic energy to internal energy. Along the heat shield surface, the pressure decreases monotonically from the stagnation value following the Newtonian sin^2(theta) distribution, with the shoulder region experiencing a steep pressure gradient as the flow expands. The low-pressure wake region behind the body base (visible in the deep blue downstream) indicates flow separation at the shoulder, creating a recirculation zone with pressure near freestream values. This pressure distribution directly determines the structural loading on the AVCOAT heat shield and the overall aerodynamic drag coefficient.
+
+### Temperature Contour
+
+![Temperature Contour](docs/assets/images/paraview_plots/temp_contour_apollo.png)
+
+The temperature contour reveals the thermal structure of the shock layer, with the stagnation temperature peaking at approximately 11,000 K (colorbar range extends to 1.1e+04 K). This value represents a perfect-gas overprediction; real-gas effects including molecular dissociation (N2 and O2 breaking apart above approximately 2,000 K) and ionization would reduce the actual stagnation temperature to approximately 8,000-10,000 K. The endothermic dissociation process absorbs energy that the perfect-gas model incorrectly assigns to translational temperature.
+
+The thin thermal boundary layer on the heat shield surface is visible as the intense red region adjacent to the body, where the isothermal wall condition (2,500 K, representing AVCOAT equilibrium temperature) creates an extremely steep temperature gradient. This gradient drives the convective heat flux that the heat shield must withstand; the Sutton-Graves correlation (q = 1.83e-4 * sqrt(rho/R) * V^3) provides the stagnation-point heating estimate. Downstream of the body, the wake thermal plume extends several body lengths, carrying heated gas from the shock layer into the base region. The thermal plume structure is relevant for predicting base heating and plume-body interactions during re-entry.
+
+### Velocity Magnitude with Streamlines
+
+![Velocity with Streamlines](docs/assets/images/paraview_plots/velocity_contour_streamlines.png)
+
+This is the most visually rich plot, revealing the complete flow topology through combined velocity magnitude coloring and streamline tracing. The freestream velocity of approximately 4,700 m/s (consistent with the AS-202 entry velocity of 4,970 m/s at 54.6 km altitude) decelerates through the bow shock to near-zero velocity at the stagnation point. The streamline pattern shows the dramatic deflection of flow around the blunt heat shield, with streamlines compressing into the thin shock layer and then expanding around the shoulder.
+
+The flow separation at the shoulder is clearly visible, with streamlines detaching from the body surface and forming the shear layer that bounds the wake recirculation zone. In the wake region, twin counter-rotating vortices are distinctly resolved by the streamlines, a hallmark of blunt body wake topology at hypersonic speeds. These vortices drive recirculation in the base region, entraining heated gas from the shock layer and creating the thermal plume visible in the temperature contour. The shear layer structure between the high-speed external flow and the low-speed wake region is a source of turbulent mixing and unsteady loading on the afterbody. The velocity field provides the most complete picture of the flow physics, connecting the upstream shock structure to the downstream wake dynamics.
 
 ---
 
