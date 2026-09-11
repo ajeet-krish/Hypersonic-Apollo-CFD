@@ -6,12 +6,21 @@ Solves the 1D heat equation with temperature-dependent properties:
 
 Uses implicit backward Euler for unconditional stability.
 Thomas algorithm (tridiagonal solver) for efficiency.
+
+Optionally couples with a charring ablation model for pyrolysis
+kinetics, density evolution, and surface recession.
 """
 import numpy as np
 
-from .config import ThermalConfig
+from .config import AblationConfig, ThermalConfig
 from .materials import get_material
-from .results import ThermalResult1D
+from .results import AblationResult1D, ThermalResult1D
+
+# Import AblationModel at module level for type checking
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .ablation import AblationModel
 
 
 class ThermalSolver1D:
@@ -23,13 +32,22 @@ class ThermalSolver1D:
     Grid: n_cells+1 nodes through wall thickness, uniform spacing.
     Hot side BC: convective heat flux (q_flux = -k * dT/dz at z=0).
     Cold side BC: fixed temperature or radiation (q_rad = eps * sigma * T^4).
+
+    When ablation_config is provided, couples with the AblationModel
+    for pyrolysis-driven density evolution and heat sink.
     """
 
-    def __init__(self, config: ThermalConfig) -> None:
+    def __init__(
+        self,
+        config: ThermalConfig,
+        ablation_config: AblationConfig | None = None,
+    ) -> None:
         """Initialize solver with thermal configuration.
 
         Args:
             config: Thermal analysis configuration.
+            ablation_config: Optional ablation configuration. When provided,
+                the solver couples density evolution with temperature.
         """
         self.config = config
         self.material = get_material(config.material)
@@ -37,14 +55,25 @@ class ThermalSolver1D:
         self.T = np.full(config.n_cells + 1, config.cold_wall_temp)
         self.t = 0.0
 
-    def solve(self) -> ThermalResult1D:
+        # Ablation coupling
+        self.ablation_config = ablation_config
+        self.ablation = None
+        self.rho: np.ndarray | None = None
+        if ablation_config is not None:
+            from .ablation import AblationModel
+            self.ablation = AblationModel(self.material, ablation_config)
+            self.rho = np.full(config.n_cells + 1, self.material.density)
+
+    def solve(self) -> ThermalResult1D | AblationResult1D:
         """Run thermal simulation from t=0 to t_end.
 
         Steps through time using implicit backward Euler with the Thomas
-        algorithm for the tridiagonal system.
+        algorithm for the tridiagonal system. When ablation is enabled,
+        couples density evolution and applies pyrolysis heat sink.
 
         Returns:
-            ThermalResult1D with temperature history and profiles.
+            ThermalResult1D or AblationResult1D depending on whether
+            ablation is enabled.
         """
         config = self.config
         n_cells = config.n_cells
@@ -58,6 +87,10 @@ class ThermalSolver1D:
         T_initial = T.copy()
         t = 0.0
 
+        # Ablation state
+        rho = self.rho.copy() if self.rho is not None else None
+        rho_initial = rho.copy() if rho is not None else None
+
         # Storage for history (pre-allocate for efficiency)
         n_steps = int(t_end / dt) + 1
         T_history = np.zeros((n_steps, n_nodes))
@@ -65,13 +98,30 @@ class ThermalSolver1D:
         T_history[0] = T.copy()
         t_history[0] = t
 
+        rho_history = None
+        if rho is not None:
+            rho_history = np.zeros((n_steps, n_nodes))
+            rho_history[0] = rho.copy()
+
         step = 1
         while t < t_end - 1e-12:
             # Ensure we don't overshoot
             dt_actual = min(dt, t_end - t)
 
             # Build and solve tridiagonal system
-            a, b, c, d = self._build_tridiagonal(T, dt_actual)
+            a, b, c, d = self._build_tridiagonal(T, dt_actual, rho)
+
+            # Apply pyrolysis heat sink to RHS if ablation is active
+            if self.ablation is not None and rho is not None:
+                drho_dt = self.ablation.compute_pyrolysis_rate(rho, T)
+                q_sink = self.ablation.compute_pyrolysis_heat_sink(drho_dt)
+                # Add heat sink to RHS (interior nodes only)
+                mat = self.material
+                for i in range(1, n_nodes - 1):
+                    cp_i = mat.cp_at_with_ablation(T[i], rho[i]) if rho is not None else mat.cp_at(T[i])
+                    rho_val = rho[i] if rho is not None else mat.density
+                    d[i] -= q_sink[i] * dt_actual / (rho_val * cp_i)
+
             T_new = _thomas_solve(a, b, c, d)
 
             # Apply boundary conditions
@@ -84,17 +134,70 @@ class ThermalSolver1D:
             t += dt_actual
             T = T_new
 
+            # Update density if ablation is active
+            if self.ablation is not None and rho is not None:
+                rho, _drho_dt = self.ablation.update_density(rho, T, dt_actual)
+
             if step < n_steps:
                 T_history[step] = T.copy()
                 t_history[step] = t
+                if rho_history is not None and rho is not None:
+                    rho_history[step] = rho.copy()
             step += 1
 
         # Trim history arrays to actual steps
         T_history = T_history[:step]
         t_history = t_history[:step]
+        if rho_history is not None:
+            rho_history = rho_history[:step]
 
         # Compute integrated heat flux (trapezoidal rule)
         q_total = self._compute_total_heat_flux(T_history, t_history, dz)
+
+        if self.ablation is not None and rho is not None and rho_initial is not None:
+            # Compute ablation metrics
+            rho_v = self.material.density
+            rho_c = self.material.char_density if self.material.char_density is not None else 0.0
+
+            # Mass loss per unit area: integral of (rho_v - rho_final) dz
+            mass_loss = float(np.trapezoid(rho_v - rho, self.z))
+
+            # Recession: total mass loss / (rho_v * L) approximated
+            recession = mass_loss / rho_v if rho_v > 0 else 0.0
+
+            # Char depth: fraction of wall that has charred
+            char_threshold = (rho_v + rho_c) / 2.0
+            char_mask = rho < char_threshold
+            char_depth = float(self.z[-1] * np.sum(char_mask) / n_nodes) if np.any(char_mask) else 0.0
+
+            # Ablation rate
+            ablation_rate_mm_s = (recession * 1000.0 / t) if t > 0 else 0.0
+
+            self.rho = rho
+
+            return AblationResult1D(
+                z=self.z,
+                T_initial=T_initial,
+                T_final=T.copy(),
+                T_history=T_history,
+                t_history=t_history,
+                t_end=t,
+                T_max_wall=float(T[0]),
+                T_max_back=float(T[-1]),
+                q_total=q_total,
+                material=self.material.name,
+                wall_thickness=config.wall_thickness,
+                rho_initial=rho_initial,
+                rho_final=rho.copy(),
+                rho_history=rho_history if rho_history is not None else np.zeros((1, n_nodes)),
+                recession_m=recession,
+                char_depth_m=char_depth,
+                mass_loss_kg_m2=mass_loss,
+                ablation_rate_mm_s=ablation_rate_mm_s,
+            )
+
+        self.T = T
+        self.t = t
 
         return ThermalResult1D(
             z=self.z,
@@ -114,6 +217,7 @@ class ThermalSolver1D:
         self,
         T: np.ndarray,
         dt: float,
+        rho: np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Build tridiagonal system for implicit backward Euler.
 
@@ -127,6 +231,7 @@ class ThermalSolver1D:
         Args:
             T: Current temperature profile (K).
             dt: Time step (s).
+            rho: Optional current density field for ablation-coupled solve.
 
         Returns:
             (a_lower, b_main, c_upper, d_rhs) arrays of size n_nodes.
@@ -141,16 +246,21 @@ class ThermalSolver1D:
         d = np.zeros(n_nodes)
 
         # Compute temperature-dependent properties at each node
-        k = np.array([mat.k_at(Ti) for Ti in T])
-        cp = np.array([mat.cp_at(Ti) for Ti in T])
-        rho = mat.density
+        if rho is not None:
+            k = np.array([mat.k_at_with_ablation(Ti, rhoi) for Ti, rhoi in zip(T, rho)])
+            cp = np.array([mat.cp_at_with_ablation(Ti, rhoi) for Ti, rhoi in zip(T, rho)])
+        else:
+            k = np.array([mat.k_at(Ti) for Ti in T])
+            cp = np.array([mat.cp_at(Ti) for Ti in T])
+        rho_val = mat.density
 
         for i in range(1, n_nodes - 1):
             # Average k at interfaces
             k_left = 0.5 * (k[i - 1] + k[i])
             k_right = 0.5 * (k[i] + k[i + 1])
 
-            alpha = rho * cp[i] / dt
+            rho_i = rho[i] if rho is not None else rho_val
+            alpha = rho_i * cp[i] / dt
 
             a[i] = k_left / dz**2
             c[i] = k_right / dz**2
@@ -213,7 +323,7 @@ class ThermalSolver1D:
         k_n = self.material.k_at(T_new[-1])
 
         T_wall = T_new[-1]
-        # Linearized: q_rad ≈ q_rad_0 + dq/dT * (T - T_wall_0)
+        # Linearized: q_rad approx q_rad_0 + dq/dT * (T - T_wall_0)
         # dq/dT = 4 * eps * sigma * T_wall^3
         dq_dt = 4.0 * eps * sigma * T_wall**3
         T_next = T_new[-2]
@@ -223,7 +333,6 @@ class ThermalSolver1D:
         # Using linearized form with Newton linearization:
         q_rad_0 = eps * sigma * (T_wall**4 - T_env**4)
         T_new[-1] = (k_n * T_next - (q_rad_0 - dq_dt * T_wall) * dz) / (k_n + dq_dt * dz)
-
 
     def _compute_total_heat_flux(
         self,

@@ -26,6 +26,9 @@ class ThermalMaterial:
         emissivity: Surface emissivity for radiation.
         k_table: Temperature-dependent conductivity table (T, k) pairs, or None.
         cp_table: Temperature-dependent specific heat table (T, cp) pairs, or None.
+        char_density: Density of fully charred material (kg/m^3), or None.
+        char_conductivity: Thermal conductivity of fully charred material (W/(m*K)), or None.
+        char_specific_heat: Specific heat of fully charred material (J/(kg*K)), or None.
     """
 
     name: str
@@ -41,6 +44,11 @@ class ThermalMaterial:
     # If None, use constant values above
     k_table: tuple[tuple[float, float], ...] | None = None
     cp_table: tuple[tuple[float, float], ...] | None = None
+
+    # Char properties (for ablation model)
+    char_density: float | None = None  # kg/m^3 (fully charred)
+    char_conductivity: float | None = None  # W/(m*K) (fully charred)
+    char_specific_heat: float | None = None  # J/(kg*K) (fully charred)
 
     def k_at(self, T: float) -> float:
         """Thermal conductivity at temperature T (K).
@@ -75,6 +83,46 @@ class ThermalMaterial:
         if self.cp_table is None:
             return self.specific_heat
         return _piecewise_interpolate(T, self.cp_table)
+
+    def k_at_with_ablation(self, T: float, rho: float) -> float:
+        """Conductivity interpolated between virgin and char based on density.
+
+        Linearly interpolates between virgin (density) and char
+        (char_density) property values based on the current local density.
+        Falls back to k_at() if char properties are not defined.
+
+        Args:
+            T: Temperature (K).
+            rho: Current local density (kg/m^3).
+
+        Returns:
+            Interpolated thermal conductivity (W/(m*K)).
+        """
+        if self.char_density is None or self.char_conductivity is None:
+            return self.k_at(T)
+        f_char = (self.density - rho) / (self.density - self.char_density)
+        f_char = max(0.0, min(1.0, f_char))
+        return (1 - f_char) * self.k_at(T) + f_char * self.char_conductivity
+
+    def cp_at_with_ablation(self, T: float, rho: float) -> float:
+        """Specific heat interpolated between virgin and char based on density.
+
+        Linearly interpolates between virgin (density) and char
+        (char_density) property values based on the current local density.
+        Falls back to cp_at() if char properties are not defined.
+
+        Args:
+            T: Temperature (K).
+            rho: Current local density (kg/m^3).
+
+        Returns:
+            Interpolated specific heat (J/(kg*K)).
+        """
+        if self.char_density is None or self.char_specific_heat is None:
+            return self.cp_at(T)
+        f_char = (self.density - rho) / (self.density - self.char_density)
+        f_char = max(0.0, min(1.0, f_char))
+        return (1 - f_char) * self.cp_at(T) + f_char * self.char_specific_heat
 
 
 def _piecewise_interpolate(
@@ -118,6 +166,9 @@ AVCOAT = ThermalMaterial(
     emissivity=0.8,
     k_table=((300, 0.5), (600, 0.8), (1000, 1.2), (1500, 1.8), (2000, 2.5)),
     cp_table=((300, 1000), (600, 1200), (1000, 1500), (1500, 1800), (2000, 2000)),
+    char_density=180.0,
+    char_conductivity=1.5,
+    char_specific_heat=800.0,
 )
 
 PICA = ThermalMaterial(
@@ -131,6 +182,9 @@ PICA = ThermalMaterial(
     emissivity=0.85,
     k_table=((300, 0.5), (500, 0.7), (1000, 1.0), (1500, 1.5), (2000, 2.0)),
     cp_table=((300, 1000), (500, 1100), (1000, 1300), (1500, 1600), (2000, 1800)),
+    char_density=120.0,
+    char_conductivity=1.0,
+    char_specific_heat=700.0,
 )
 
 MATERIALS: dict[str, ThermalMaterial] = {"avcoat": AVCOAT, "pica": PICA}
