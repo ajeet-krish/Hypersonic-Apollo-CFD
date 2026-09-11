@@ -11,6 +11,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import numpy as np
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from geometry.blunt_body import generate_contour
@@ -1076,6 +1078,134 @@ def run_validation_stage(config: CaseConfig) -> int:
     return 0 if report["all_pass"] else 1
 
 
+def run_thermal_stage(config: CaseConfig) -> int:
+    """Run thermal analysis on SU2 solution.
+
+    Extracts heat flux from VTU and runs 2D thermal simulation.
+    Falls back to synthetic heat flux distribution if VTU extraction fails.
+
+    Produces:
+        - output/{name}/thermal/thermal_results.json
+        - docs/assets/images/{name}/wall_temperature.png
+        - docs/assets/images/{name}/through_wall_profiles.png
+        - docs/assets/images/{name}/temperature_contour.png
+
+    Returns:
+        0 on success, 1 on failure.
+    """
+    print(f"\n[{config.label}] Thermal analysis stage")
+
+    from thermal.config import ThermalConfig2D
+    from thermal.heat_flux import heat_flux_distribution
+    from thermal.results import save_thermal_results_2d
+    from thermal.solver_2d import ThermalSolver2D
+
+    # Try to extract heat flux from VTU
+    body_config = config.preset_fn()
+    x_body, r_body = generate_contour(body_config)
+
+    q_surface = None
+    s_surface = None
+
+    vtu_path = Path(config.su2_dir) / "flow.vtu"
+    if vtu_path.exists():
+        try:
+            from thermal.heat_flux import extract_heat_flux_from_vtu
+            flux_data = extract_heat_flux_from_vtu(vtu_path, (x_body, r_body))
+            s_surface = flux_data["s"]
+            q_surface = flux_data["q"]
+            print(f"  Extracted heat flux: {len(s_surface)} points, "
+                  f"q_max={flux_data['q_max']:.0f} W/m^2")
+        except (OSError, RuntimeError, ValueError) as exc:
+            print(f"  VTU extraction failed: {exc}")
+            print(f"  Falling back to synthetic heat flux distribution")
+
+    # Fall back to synthetic distribution if extraction failed
+    if q_surface is None or s_surface is None:
+        print(f"  Using synthetic sinusoidal heat flux distribution")
+        n_s = 50  # Default surface points
+        s_surface = np.linspace(0.0, 1.0, n_s)
+        q_max = 500000.0  # 500 kW/m^2 default
+        q_surface = heat_flux_distribution(s_surface, q_max, distribution="sinusoidal")
+
+    # Build 2D thermal config
+    thermal_config = ThermalConfig2D(
+        material=config.thermal_material,
+        wall_thickness=config.thermal_wall_thickness,
+        n_s=len(s_surface),
+        n_z=50,
+        dt=0.1,
+        t_end=100.0,
+        q_surface=tuple(q_surface.tolist()),
+        s_surface=tuple(s_surface.tolist()),
+        cold_wall_temp=300.0,
+        radiation=True,
+    )
+
+    print(f"  Material: {config.thermal_material}")
+    print(f"  Wall thickness: {config.thermal_wall_thickness*1000:.1f} mm")
+    print(f"  Grid: {thermal_config.n_s} x {thermal_config.n_z}")
+    print(f"  Time: {thermal_config.t_end} s, dt={thermal_config.dt} s")
+
+    # Run 2D solver
+    try:
+        solver = ThermalSolver2D(thermal_config)
+        result = solver.solve()
+    except (RuntimeError, ValueError) as exc:
+        print(f"  Thermal solver FAILED: {exc}")
+        return 1
+
+    print(f"  T_max_wall: {result.T_max_wall:.1f} K")
+    print(f"  T_max_back: {result.T_max_back:.1f} K")
+    print(f"  q_total: {result.q_total:.0f} J/m^2")
+
+    # Save results
+    thermal_dir = Path(config.thermal_dir)
+    thermal_dir.mkdir(parents=True, exist_ok=True)
+    save_thermal_results_2d(result, thermal_dir / "thermal_results.json")
+    print(f"  Results: {thermal_dir / 'thermal_results.json'}")
+
+    # Generate plots
+    images_dir = Path(config.images_dir)
+    images_dir.mkdir(parents=True, exist_ok=True)
+    n_plots = 0
+    n_ok = 0
+
+    # 1. Wall temperature distribution
+    n_plots += 1
+    try:
+        from viz.thermal import plot_wall_temperature
+        path = plot_wall_temperature(result, images_dir / "wall_temperature.png")
+        print(f"  Plot: {path}")
+        n_ok += 1
+    except (OSError, RuntimeError) as exc:
+        print(f"  Wall temperature plot FAILED: {exc}")
+
+    # 2. Through-wall profiles
+    n_plots += 1
+    try:
+        from viz.thermal import plot_through_wall_profiles
+        path = plot_through_wall_profiles(result, images_dir / "through_wall_profiles.png")
+        print(f"  Plot: {path}")
+        n_ok += 1
+    except (OSError, RuntimeError) as exc:
+        print(f"  Through-wall profiles plot FAILED: {exc}")
+
+    # 3. Temperature contour
+    n_plots += 1
+    try:
+        from viz.thermal import plot_temperature_contour
+        path = plot_temperature_contour(result, images_dir / "temperature_contour.png")
+        print(f"  Plot: {path}")
+        n_ok += 1
+    except (OSError, RuntimeError) as exc:
+        print(f"  Temperature contour plot FAILED: {exc}")
+
+    print(f"  Plots: {n_ok}/{n_plots} generated")
+
+    return 0 if n_ok > 0 else 1
+
+
 def run_gci_stage(config: CaseConfig) -> int:
     """Run GCI mesh convergence study on three tiers.
 
@@ -1267,6 +1397,7 @@ STAGE_FUNCTIONS: dict[PipelineStage, Callable[[CaseConfig], int]] = {
     PipelineStage.POSTPROCESS: run_postprocess_stage,
     PipelineStage.POSTPROCESS_3D: run_postprocess3d_stage,
     PipelineStage.VALIDATION: run_validation_stage,
+    PipelineStage.THERMAL: run_thermal_stage,
     PipelineStage.GCI: run_gci_stage,
     PipelineStage.APOLLO: run_apollo_stage,
 }
