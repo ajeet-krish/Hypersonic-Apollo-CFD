@@ -7,11 +7,12 @@ uv sync                          # Install deps (Python 3.13, numpy, scipy, gmsh
 uv run pytest tests/ -v          # Run all tests (~565)
 uv run pytest tests/test_case_config.py -v  # Run single test file
 uv run python run.py --case apollo-cm --mach 15.6 --full2d  # Full2D simulation
+uv run python run.py --case apollo-cm --thermal --thermal-time 200  # Thermal analysis
 ```
 
 ## Architecture
 
-**Pipeline flow:** `geometry -> mesh -> SU2 -> postprocess -> validation`
+**Pipeline flow:** `geometry -> mesh -> SU2 -> postprocess -> validation -> thermal`
 
 **Entry points:**
 - `run.py` -- Unified CLI (replaces 6 legacy scripts). Use `--full2d` for entire body, default is axisymmetric half-body.
@@ -25,6 +26,7 @@ uv run python run.py --case apollo-cm --mach 15.6 --full2d  # Full2D simulation
 | `pipeline/` | Case config, stage orchestration | `case_config.py`, `stages.py` |
 | `physics/` | US Standard Atmosphere, real-gas | `atmosphere.py` |
 | `validation/` | Sutton-Graves, Billig, Newtonian | `billig.py`, `compare.py` |
+| `thermal/` | 1D/2D heat equation, ablation | `solver_2d.py`, `config.py` |
 | `viz/` | Contour plots, convergence, geometry | `contour.py`, `mesh.py` |
 
 **Key data flow:**
@@ -35,6 +37,7 @@ BluntBodyConfig (geometry/presets.py)
   -> SU2HypersonicConfig.write() -> config.cfg
   -> SU2Solver.run_stages() -> flow.vtu, history.csv
   -> postprocess + validation -> results.json, plots
+  -> thermal analysis -> thermal_results.json, temperature plots
 ```
 
 ## Conventions
@@ -78,6 +81,54 @@ output/{case}/
   su2/{mach}/         # Per-Mach: config.cfg, history.csv, flow.vtu, results.json
   postprocess/        # postprocess.json
   validation/         # validation.json
+  thermal/            # thermal_results.json (if --thermal enabled)
+```
+
+## Thermal Analysis
+
+The thermal module solves the 2D axisymmetric heat equation through the heat shield wall with temperature-dependent properties and optional charring ablation.
+
+**CLI flags:**
+- `--thermal` -- Enable thermal analysis after SU2
+- `--material {avcoat,pica}` -- Heat shield material (default: avcoat)
+- `--wall-thickness FLOAT` -- Wall thickness in meters (default: 0.05)
+- `--thermal-time FLOAT` -- Simulation duration in seconds (default: 100)
+- `--ablation` -- Enable charring ablation model
+- `--thermal-output DIR` -- Custom thermal output directory
+
+**Example:**
+```bash
+uv run python run.py --case apollo-cm --thermal --thermal-time 200 --ablation
+```
+
+**Key files:**
+| File | Purpose |
+|------|---------|
+| `src/thermal/config.py` | ThermalConfig2D, AblationConfig dataclasses |
+| `src/thermal/solver_2d.py` | 2D implicit backward Euler solver |
+| `src/thermal/heat_flux.py` | VTU heat flux extraction, synthetic distributions |
+| `src/thermal/materials.py` | Temperature-dependent material properties |
+| `src/thermal/ablation.py` | Charring ablation model (pyrolysis kinetics) |
+| `src/thermal/results.py` | Result dataclasses, JSON serialization |
+| `src/viz/thermal.py` | Wall temp, through-wall profiles, contour plots |
+| `src/validation/thermal_validation.py` | Validation against Sutton-Graves, physical bounds |
+
+**Thermal results JSON structure:**
+```json
+{
+  "config": { "material": "avcoat", "wall_thickness_m": 0.05 },
+  "results": { "T_max_wall_K": 2500, "T_max_back_K": 500, "q_total_J_m2": 1e6 },
+  "surface": { "s_m": [...], "q_surface_W_m2": [...] },
+  "profiles": { "z_m": [...], "T_initial_K": [...], "T_final_K": [...] }
+}
+```
+
+**Data flow:**
+```
+SU2 flow.vtu -> extract_heat_flux_from_vtu() -> q_surface(s)
+  -> ThermalConfig2D -> ThermalSolver2D.solve() -> ThermalResult2D
+  -> save_thermal_results_2d() -> thermal_results.json
+  -> plot_wall_temperature(), plot_through_wall_profiles(), plot_temperature_contour()
 ```
 
 ## Tests

@@ -116,6 +116,40 @@ def main() -> int:
         default=5.0,
         help="Starting Mach for mach-ramp strategy (default: 5.0)",
     )
+    parser.add_argument(
+        "--thermal",
+        action="store_true",
+        help="Run thermal analysis after SU2",
+    )
+    parser.add_argument(
+        "--material",
+        choices=["avcoat", "pica"],
+        default="avcoat",
+        help="Heat shield material (default: avcoat)",
+    )
+    parser.add_argument(
+        "--wall-thickness",
+        type=float,
+        default=0.05,
+        help="Wall thickness in meters (default: 0.05)",
+    )
+    parser.add_argument(
+        "--thermal-time",
+        type=float,
+        default=100.0,
+        help="Thermal simulation duration in seconds (default: 100)",
+    )
+    parser.add_argument(
+        "--ablation",
+        action="store_true",
+        help="Enable charring ablation model",
+    )
+    parser.add_argument(
+        "--thermal-output",
+        type=str,
+        default=None,
+        help="Custom thermal output directory",
+    )
     args = parser.parse_args()
 
     config = CaseConfig(
@@ -134,6 +168,12 @@ def main() -> int:
         su2_euler_iterations=args.euler_iterations,
         su2_rans_iterations=args.rans_iterations,
         su2_mach_ramp_start=args.mach_ramp_start,
+        run_thermal=args.thermal,
+        thermal_material=args.material,
+        thermal_wall_thickness=args.wall_thickness,
+        thermal_t_end=args.thermal_time,
+        thermal_ablation=args.ablation,
+        thermal_output_dir=args.thermal_output,
     )
 
     if args.step:
@@ -143,6 +183,16 @@ def main() -> int:
         stages = [PipelineStage.MESH3D, PipelineStage.SU2_3D, PipelineStage.POSTPROCESS_3D]
     else:
         stages = None
+        # If --thermal is set, ensure thermal stage is included
+        if args.thermal:
+            stages = [
+                PipelineStage.GEOMETRY,
+                PipelineStage.MESH,
+                PipelineStage.SU2,
+                PipelineStage.POSTPROCESS,
+                PipelineStage.VALIDATION,
+                PipelineStage.THERMAL,
+            ]
 
     return run_full_pipeline(config, stages)
 

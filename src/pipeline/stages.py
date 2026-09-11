@@ -1083,6 +1083,7 @@ def run_thermal_stage(config: CaseConfig) -> int:
 
     Extracts heat flux from VTU and runs 2D thermal simulation.
     Falls back to synthetic heat flux distribution if VTU extraction fails.
+    Optionally couples with charring ablation model when enabled.
 
     Produces:
         - output/{name}/thermal/thermal_results.json
@@ -1095,10 +1096,14 @@ def run_thermal_stage(config: CaseConfig) -> int:
     """
     print(f"\n[{config.label}] Thermal analysis stage")
 
-    from thermal.config import ThermalConfig2D
+    from thermal.config import AblationConfig, ThermalConfig2D
     from thermal.heat_flux import heat_flux_distribution
     from thermal.results import save_thermal_results_2d
     from thermal.solver_2d import ThermalSolver2D
+
+    # Determine output directory
+    thermal_dir = Path(config.thermal_dir)
+    thermal_dir.mkdir(parents=True, exist_ok=True)
 
     # Try to extract heat flux from VTU
     body_config = config.preset_fn()
@@ -1117,7 +1122,7 @@ def run_thermal_stage(config: CaseConfig) -> int:
             print(f"  Extracted heat flux: {len(s_surface)} points, "
                   f"q_max={flux_data['q_max']:.0f} W/m^2")
         except (OSError, RuntimeError, ValueError) as exc:
-            print(f"  VTU extraction failed: {exc}")
+            print(f"  WARNING: VTU extraction failed: {exc}")
             print(f"  Falling back to synthetic heat flux distribution")
 
     # Fall back to synthetic distribution if extraction failed
@@ -1135,33 +1140,33 @@ def run_thermal_stage(config: CaseConfig) -> int:
         n_s=len(s_surface),
         n_z=50,
         dt=0.1,
-        t_end=100.0,
+        t_end=config.thermal_t_end,
         q_surface=tuple(q_surface.tolist()),
         s_surface=tuple(s_surface.tolist()),
         cold_wall_temp=300.0,
         radiation=True,
     )
 
+    # Ablation config
+    ablation_config = None
+    if config.thermal_ablation:
+        ablation_config = AblationConfig()
+        print(f"  Ablation model: ENABLED")
+
     print(f"  Material: {config.thermal_material}")
     print(f"  Wall thickness: {config.thermal_wall_thickness*1000:.1f} mm")
     print(f"  Grid: {thermal_config.n_s} x {thermal_config.n_z}")
-    print(f"  Time: {thermal_config.t_end} s, dt={thermal_config.dt} s")
+    print(f"  Simulation time: {thermal_config.t_end:.0f} s, dt={thermal_config.dt} s")
 
     # Run 2D solver
     try:
-        solver = ThermalSolver2D(thermal_config)
+        solver = ThermalSolver2D(thermal_config, ablation_config=ablation_config)
         result = solver.solve()
     except (RuntimeError, ValueError) as exc:
         print(f"  Thermal solver FAILED: {exc}")
         return 1
 
-    print(f"  T_max_wall: {result.T_max_wall:.1f} K")
-    print(f"  T_max_back: {result.T_max_back:.1f} K")
-    print(f"  q_total: {result.q_total:.0f} J/m^2")
-
     # Save results
-    thermal_dir = Path(config.thermal_dir)
-    thermal_dir.mkdir(parents=True, exist_ok=True)
     save_thermal_results_2d(result, thermal_dir / "thermal_results.json")
     print(f"  Results: {thermal_dir / 'thermal_results.json'}")
 
@@ -1179,7 +1184,7 @@ def run_thermal_stage(config: CaseConfig) -> int:
         print(f"  Plot: {path}")
         n_ok += 1
     except (OSError, RuntimeError) as exc:
-        print(f"  Wall temperature plot FAILED: {exc}")
+        print(f"  WARNING: Wall temperature plot failed: {exc}")
 
     # 2. Through-wall profiles
     n_plots += 1
@@ -1189,7 +1194,7 @@ def run_thermal_stage(config: CaseConfig) -> int:
         print(f"  Plot: {path}")
         n_ok += 1
     except (OSError, RuntimeError) as exc:
-        print(f"  Through-wall profiles plot FAILED: {exc}")
+        print(f"  WARNING: Through-wall profiles plot failed: {exc}")
 
     # 3. Temperature contour
     n_plots += 1
@@ -1199,9 +1204,20 @@ def run_thermal_stage(config: CaseConfig) -> int:
         print(f"  Plot: {path}")
         n_ok += 1
     except (OSError, RuntimeError) as exc:
-        print(f"  Temperature contour plot FAILED: {exc}")
+        print(f"  WARNING: Temperature contour plot failed: {exc}")
 
     print(f"  Plots: {n_ok}/{n_plots} generated")
+
+    # Print summary
+    print(f"\n  --- Thermal Analysis Summary ---")
+    print(f"  Max wall temp: {result.T_max_wall:.0f} K")
+    print(f"  Max back temp: {result.T_max_back:.0f} K")
+    print(f"  Total heat: {result.q_total:.0f} J/m^2")
+
+    if hasattr(result, "recession_m"):
+        print(f"  Surface recession: {result.recession_m*1000:.3f} mm")
+        print(f"  Char depth: {result.char_depth_m*1000:.3f} mm")
+        print(f"  Mass loss: {result.mass_loss_kg_m2:.3f} kg/m^2")
 
     return 0 if n_ok > 0 else 1
 

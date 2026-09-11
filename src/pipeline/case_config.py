@@ -22,6 +22,7 @@ class PipelineStage(Enum):
     POSTPROCESS = "postprocess"
     POSTPROCESS_3D = "postprocess_3d"
     VALIDATION = "validation"
+    THERMAL = "thermal"
     GCI = "gci"
     SWEEP = "sweep"
     SITE = "site"
@@ -48,6 +49,12 @@ class CaseConfig:
         su2_euler_iterations: Iterations for the Euler stage (euler-rans strategy)
         su2_rans_iterations: Iterations for the RANS restart stage (euler-rans strategy)
         su2_mach_ramp_start: Starting Mach for mach-ramp strategy
+        run_thermal: Run thermal analysis after SU2
+        thermal_material: Heat shield material name
+        thermal_wall_thickness: Wall thickness (m)
+        thermal_t_end: Thermal simulation duration (s)
+        thermal_ablation: Enable charring ablation model
+        thermal_output_dir: Custom output directory (None = default)
     """
     name: str
     label: str
@@ -67,6 +74,12 @@ class CaseConfig:
     full2d: bool = False  # Show entire body (both halves), not axisymmetric half
     is_3d: bool = False  # Enable 3D simulation mode
     step_file: str = "geometry/apollo_3d.step"  # STEP file for 3D geometry
+    run_thermal: bool = False  # Run thermal analysis after SU2
+    thermal_material: str = "avcoat"  # Heat shield material
+    thermal_wall_thickness: float = 0.05  # Wall thickness (m)
+    thermal_t_end: float = 100.0  # Simulation duration (s)
+    thermal_ablation: bool = False  # Enable ablation model
+    thermal_output_dir: str | None = None  # Custom output directory
 
     @property
     def output_dir(self) -> str:
@@ -94,3 +107,10 @@ class CaseConfig:
     def images_dir(self) -> str:
         """Images directory for plots."""
         return f"docs/assets/images/{self.name}"
+
+    @property
+    def thermal_dir(self) -> str:
+        """Thermal analysis output directory."""
+        if self.thermal_output_dir:
+            return self.thermal_output_dir
+        return f"output/{self.name}/thermal"
