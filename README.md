@@ -24,15 +24,15 @@ A computational fluid dynamics (CFD) investigation of hypersonic flow over the A
 
 ### Vehicle Dimensions
 
-| Parameter | Value | Source |
-|-----------|-------|--------|
-| Heat Shield Radius (R_shield) | 4.694 m (184.8 in) | DXF-verified |
-| Maximum Body Radius | 1.924 m (75.7 in) | DXF-verified |
-| Cone Half-Angle | 33.0 deg | DXF-verified |
-| Total Body Length | 3.392 m (133.5 in) | DXF-verified |
-| Shoulder Fillet Radius | 0.196 m (7.7 in) | DXF-verified |
-| Base Fillet Radius | 0.231 m (9.1 in) | DXF-verified |
-| Base Radius | 0.219 m (8.6 in) | DXF-verified |
+| Parameter | Value |
+|-----------|-------|
+| Heat Shield Radius (R_shield) | 4.694 m (184.8 in) |
+| Maximum Body Radius | 1.924 m (75.7 in) | 
+| Cone Half-Angle | 33.0 deg |
+| Total Body Length | 3.392 m (133.5 in) | 
+| Shoulder Fillet Radius | 0.196 m (7.7 in) | 
+| Base Fillet Radius | 0.231 m (9.1 in) | 
+| Base Radius | 0.219 m (8.6 in) |
 
 ### Geometry
 
@@ -40,59 +40,28 @@ The Apollo CM features a spherically-blunted cone with a concave heat shield. Th
 
 | 2D Dimensions | 3D Geometry |
 |---------------|-------------|
-| ![Apollo CM 2D](docs/assets/images/apollo-cm/geometry.png) | ![Apollo CM 3D](docs/assets/images/apollo-cm/body_3d.png) |
+| ![Apollo CM 2D](docs/assets/geometry/apollo-2d-dimensions.png) | ![Apollo CM 3D](docs/assets/geometry/apollo-3d-geometry.png) |
 
 ### Simulation Conditions
 
-| Condition | Mach | Altitude (km) | V (m/s) | rho (kg/m3) | T (K) | Re_D |
+| Condition | $Mach$ | $Altitude (km)$ | $V (m/s)$ | $rho (kg/m3)$ | $T (K)$ | $Re_D$ |
 |-----------|------|---------------|---------|-------------|-------|------|
 | Low hypersonic | 5.0 | 40 | 1,540 | 3.996e-3 | 250.4 | 1.52e6 |
 | Mid hypersonic | 10.0 | 35 | 2,380 | 8.463e-3 | 236.5 | 5.07e6 |
 | AS-202 re-entry | 15.6 | 54.6 | 4,970 | 4.002e-4 | 260.6 | 1.72e5 |
 
----
+### Mesh
 
-## Geometry
+The mesh domain is a full elliptical farfield showing both halves of the Apollo CM.
 
-### DXF-Verified Dimensions
-
-Geometry is extracted from DXF exports and verified against NASA TN D-6028 specifications. The heat shield uses internal tangency for the concave sphere fillet model, producing dimensions that match the DXF source within 0.1%.
-
-| Parameter | DXF Value | Code Value | Agreement |
-|-----------|-----------|------------|-----------|
-| R_shield | 4.694 m | 4.694 m | 100% |
-| Max Radius (shoulder) | 1.924 m | 1.924 m | 100% |
-| Cone Angle | 33.0 deg | 33.0 deg | 100% |
-| Body Length | 3.391 m | 3.392 m | 99.97% |
-| Shoulder Fillet | 0.196 m | 0.196 m | 100% |
-| Base Fillet | 0.231 m | 0.231 m | 100% |
-| Base Radius | 0.219 m | 0.219 m | 100% |
-| Fillet Center | (0.555, 1.760) | (0.554, 1.760) | 99.9% |
-
-### Computational Domain
-
-Two mesh modes are supported:
-
-**Axisymmetric (half-body):** Elliptical O-grid farfield for zero-AoA runs. Smaller domain, faster convergence.
-
-**Full2D (entire body):** Full elliptical farfield showing both halves of the Apollo CM. Used for visualization and AoA studies.
-
-| Boundary | Axisymmetric | Full2D |
-|----------|-------------|--------|
-| Upstream | 8 x R_nose | 8 x R_nose |
-| Downstream | 12 x L_body | 12 x L_body |
-| Lateral | 8 x R_nose | 4 x R_nose |
-
-### CFD Mesh
-
-| Parameter | Axisymmetric | Full2D |
-|-----------|-------------|--------|
-| Elements | ~24,000 | ~42,000 |
-| Min quality | 0.32 | 0.00 |
-| Mean quality | 0.97 | 0.97 |
-| Bad cells | 0% | 0% |
-| Size field | Distance-based: 0.05-3.0 m | Distance-based: 0.05-3.0 m |
-| Algorithm | Frontal-Delaunay + Netgen | Frontal-Delaunay + Netgen |
+| Parameter | Value |
+|-----------|-------------|
+| Elements | ~42,000 |
+| Min quality | 0.00 |
+| Mean quality | 0.97 |
+| Bad cells | 0% |
+| Size field | Distance-based: 0.05-3.0 m |
+| Algorithm | Frontal-Delaunay + Netgen |
 
 ---
 

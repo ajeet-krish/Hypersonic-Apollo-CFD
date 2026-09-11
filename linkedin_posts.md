@@ -6,17 +6,11 @@ A collection of post ideas for sharing hypersonic aerothermodynamics CFD on Link
 
 ## Post 1: How Apollo Survived Re-entry at Mach 28
 
-**Hook:**
-The Apollo Command Module hit Earth's atmosphere at 11 km/s. The air in front of it didn't get out of the way. It compressed into a bow shock so intense that temperatures behind it reached 18,000 K. Here is how CFD captures that physics.
+When a blunt body enters the atmosphere at hypersonic speed, the flow ahead cannot propagate upstream fast enough. A detached bow shock forms in front of the heat shield, creating a thin layer of subsonic, high-temperature gas between the shock and the body surface. A blunt shape creates a thick shock layer that pushes the highest heating away from the surface.
 
-**Body:**
-When a blunt body enters the atmosphere at hypersonic speed, the flow ahead cannot propagate upstream fast enough. A detached bow shock forms in front of the heat shield, creating a thin layer of subsonic, high-temperature gas between the shock and the body surface. This is the Allen-Eggers principle in action: a blunt shape creates a thick shock layer that pushes the highest heating away from the surface.
+I simulated the Apollo Command Module at Mach 15.6. The geometry is a simplified, spherically-blunted cone. The CFD captures the full flow field: the bow shock structure, the subsonic shock layer, the boundary layer developing along the heat shield, and the wake region behind the base. Across the shock, the flow goes from hypersonic to subsonic, pressure jumps by three orders of magnitude, and temperatures climb high enough to dissociate air molecules.
 
-I simulated the Apollo Command Module at Mach 15.6 (the AS-202 flight test condition, 54.6 km altitude) using RANS CFD with the Spalart-Allmaras turbulence model. The geometry is a spherically-blunted cone: a concave heat shield (R=4.694 m) with a 33-degree conical afterbody, extracted from DXF source files and verified against NASA TN D-6028.
-
-The bow shock forms approximately 0.8 nose radii upstream of the heat shield. Across the shock, pressure jumps 1,300x (from 42 Pa freestream to 558 kPa stagnation), temperature rises from 261 K to over 60,000 K (perfect gas), and Mach drops from 15.6 to subsonic. The heat shield does not just endure this environment -- it is shaped specifically to manage it. The large radius of curvature spreads the thermal load over a wide area, reducing peak heating by a factor of sqrt(D/2R) compared to a sharp nose.
-
-The CFD captures the full flow field: the bow shock structure, the subsonic shock layer, the boundary layer developing along the heat shield, and the wake region behind the base. Triple validation against Sutton-Graves heating, Billig shock standoff, and Newtonian pressure distributions confirms the simulation produces physically correct results.
+The Apollo heat shield works because a large radius of curvature spreads the thermal load over a wider area, while a sharp nose would concentrate the same energy into a tiny region.
 
 **Key takeaway:**
 The Apollo heat shield shape is not arbitrary. It is the physical embodiment of compressible flow physics at re-entry conditions, designed to survive the most extreme thermal environment in atmospheric flight.
@@ -25,9 +19,11 @@ The Apollo heat shield shape is not arbitrary. It is the physical embodiment of 
 The next generation of re-entry vehicles (Orion, Starliner, Crew Dragon) all use variations of the same blunt-body principle. What has changed is the materials -- PICA-X and AVCOAT 5026-39 instead of the original AVCOAT 5026-39G. How do you think material science has changed what is possible in re-entry vehicle design?
 
 **Suggested images:**
-1. Apollo CM geometry annotated profile showing heat shield, fillets, and cone
+1. Real life image of Apollo CM entry
+2. Apollo CM 3d geometry
 2. Mach number contour showing the bow shock structure at M=15.6
 3. Pressure contour showing the 1,300:1 pressure ratio across the shock
+4. Temperature contour
 
 **Hashtags:**
 `#CFD #Hypersonic #Apollo #ReEntry #AerospaceEngineering #FluidDynamics #NASA`
