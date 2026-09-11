@@ -116,7 +116,7 @@ class TestThermalValidation:
             "results": {
                 "T_max_wall_K": 2500.0,
                 "T_max_back_K": 500.0,
-                "q_total_J_m2": 1e6,
+                "q_total_J_m2": 1.6e8,  # 160 MJ/m² -> ~1.6 MW/m² average
             },
         }
         freestream = {"M": 15.0, "rho_inf": 0.001, "V_inf": 5000.0, "altitude": 60000.0}

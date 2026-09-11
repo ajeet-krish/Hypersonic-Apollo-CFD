@@ -31,11 +31,18 @@ def validate_thermal_results(
     # Check 1: Sutton-Graves stagnation heating comparison
     sg = sutton_graves(freestream["rho_inf"], freestream["V_inf"], geometry["R_nose"])
     q_stag_analytical = sg.q_stag
-    q_total_simulated = thermal_results.get("results", {}).get("q_total_J_m2", 0.0)
+
+    # Get max wall temperature and estimate peak heat flux from thermal results
+    T_max = thermal_results.get("results", {}).get("T_max_wall_K", 0.0)
+    t_end = thermal_results.get("config", {}).get("t_end_s", 100.0)
+
+    # Estimate average heat flux from total heat / time (J/m² / s = W/m²)
+    q_total = thermal_results.get("results", {}).get("q_total_J_m2", 0.0)
+    q_peak_estimated = q_total / t_end if t_end > 0 else 0.0
 
     # Order of magnitude check (within factor of 10)
-    if q_total_simulated > 0 and q_stag_analytical > 0:
-        ratio = q_total_simulated / q_stag_analytical
+    if q_peak_estimated > 0 and q_stag_analytical > 0:
+        ratio = q_peak_estimated / q_stag_analytical
         status = "PASS" if 0.1 < ratio < 10.0 else "FAIL"
     else:
         status = "FAIL"
@@ -44,7 +51,7 @@ def validate_thermal_results(
     report["checks"].append({
         "name": "Sutton-Graves comparison",
         "analytical_q_stag_W_m2": round(q_stag_analytical, 2),
-        "simulated_q_total_J_m2": round(q_total_simulated, 2),
+        "estimated_q_peak_W_m2": round(q_peak_estimated, 2),
         "ratio": round(ratio, 4),
         "status": status,
     })
@@ -69,10 +76,11 @@ def validate_thermal_results(
         report["all_pass"] = False
 
     # Check 3: Heat flux sign sanity
-    q_status = "PASS" if q_total_simulated >= 0 else "FAIL"
+    q_total = thermal_results.get("results", {}).get("q_total_J_m2", 0.0)
+    q_status = "PASS" if q_total >= 0 else "FAIL"
     report["checks"].append({
         "name": "q_positive",
-        "q_total_J_m2": round(q_total_simulated, 2),
+        "q_total_J_m2": round(q_total, 2),
         "status": q_status,
     })
     if q_status == "FAIL":

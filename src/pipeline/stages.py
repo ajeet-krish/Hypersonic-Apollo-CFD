@@ -1167,7 +1167,11 @@ def run_thermal_stage(config: CaseConfig) -> int:
         return 1
 
     # Save results
-    save_thermal_results_2d(result, thermal_dir / "thermal_results.json")
+    if hasattr(result, "recession_m"):
+        from thermal.results import save_ablation_results_2d
+        save_ablation_results_2d(result, thermal_dir / "thermal_results.json")
+    else:
+        save_thermal_results_2d(result, thermal_dir / "thermal_results.json")
     print(f"  Results: {thermal_dir / 'thermal_results.json'}")
 
     # Generate plots
@@ -1205,6 +1209,34 @@ def run_thermal_stage(config: CaseConfig) -> int:
         n_ok += 1
     except (OSError, RuntimeError) as exc:
         print(f"  WARNING: Temperature contour plot failed: {exc}")
+
+    # 4-6. Ablation plots (if enabled)
+    if hasattr(result, "recession_m"):
+        try:
+            from viz.thermal import plot_char_layer, plot_ablation_rate, plot_mass_loss
+
+            n_plots += 1
+            path = plot_char_layer(result, images_dir / "char_layer.png")
+            print(f"  Plot: {path}")
+            n_ok += 1
+        except (OSError, RuntimeError) as exc:
+            print(f"  WARNING: Char layer plot failed: {exc}")
+
+        try:
+            n_plots += 1
+            path = plot_ablation_rate(result, images_dir / "ablation_rate.png")
+            print(f"  Plot: {path}")
+            n_ok += 1
+        except (OSError, RuntimeError) as exc:
+            print(f"  WARNING: Ablation rate plot failed: {exc}")
+
+        try:
+            n_plots += 1
+            path = plot_mass_loss(result, images_dir / "mass_loss.png")
+            print(f"  Plot: {path}")
+            n_ok += 1
+        except (OSError, RuntimeError) as exc:
+            print(f"  WARNING: Mass loss plot failed: {exc}")
 
     print(f"  Plots: {n_ok}/{n_plots} generated")
 

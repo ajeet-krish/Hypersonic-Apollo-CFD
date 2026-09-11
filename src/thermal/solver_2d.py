@@ -426,20 +426,8 @@ class ThermalSolver2D:
         if n_steps < 2:
             return 0.0
 
-        # Compute time-averaged heat flux at hot face
-        q_wall_avg = 0.0
-        for step_idx in range(n_steps):
-            T_wall = T_wall_history[step_idx]
-            # Average heat flux across surface at this time step
-            q_sum = 0.0
-            for i in range(self.n_s):
-                k0 = mat.k_at(T_wall[i])
-                # Use T[1] from final field as approximation
-                # (we only have wall temperatures in history)
-                q_sum += k0 * 100.0  # placeholder gradient
-            q_wall_avg += q_sum / self.n_s
-
-        # Simpler: just integrate the applied flux over time
+        # Compute total heat input as applied flux integrated over time
+        # This is the total energy delivered to the surface (J/m²)
         q_applied = float(np.mean(self.config.q_surface))
         q_total = q_applied * (t_history[-1] - t_history[0])
         return abs(q_total)
